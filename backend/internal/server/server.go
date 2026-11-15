@@ -103,11 +103,29 @@ func toDTO(draft meetingtype.MeetingType) api.MeetingType {
 }
 
 func (h *handler) PublishOwnerMeetingType(_ context.Context, request api.PublishOwnerMeetingTypeRequestObject) (api.PublishOwnerMeetingTypeResponseObject, error) {
-	item, ok := h.calendar.Publish(request.MeetingTypeId)
-	if !ok {
+	item, err := h.calendar.Publish(request.MeetingTypeId)
+	if errors.Is(err, memory.ErrInvalidTransition) {
+		return api.PublishOwnerMeetingType409JSONResponse{InvalidTypeTransitionJSONResponse: api.InvalidTypeTransitionJSONResponse{Message: "Снятый с публикации тип нельзя опубликовать повторно"}}, nil
+	}
+	if err != nil {
 		return api.PublishOwnerMeetingType404JSONResponse{MeetingTypeNotFoundJSONResponse: api.MeetingTypeNotFoundJSONResponse{Message: "Тип встречи не найден"}}, nil
 	}
 	return api.PublishOwnerMeetingType200JSONResponse(toDTO(item)), nil
+}
+
+func (h *handler) WithdrawOwnerMeetingType(_ context.Context, request api.WithdrawOwnerMeetingTypeRequestObject) (api.WithdrawOwnerMeetingTypeResponseObject, error) {
+	item, err := h.calendar.Withdraw(request.MeetingTypeId)
+	if errors.Is(err, memory.ErrInvalidTransition) {
+		return api.WithdrawOwnerMeetingType409JSONResponse{InvalidTypeTransitionJSONResponse: api.InvalidTypeTransitionJSONResponse{Message: "Черновик ещё не опубликован"}}, nil
+	}
+	if err != nil {
+		return api.WithdrawOwnerMeetingType404JSONResponse{MeetingTypeNotFoundJSONResponse: api.MeetingTypeNotFoundJSONResponse{Message: "Тип встречи не найден"}}, nil
+	}
+	return api.WithdrawOwnerMeetingType200JSONResponse(toDTO(item)), nil
+}
+
+func bookingClosedDTO() api.BookingClosedJSONResponse {
+	return api.BookingClosedJSONResponse{Message: api.BookingClosedErrorMessage("Запись на этот тип встречи закрыта")}
 }
 
 func (h *handler) ListPublishedMeetingTypes(context.Context, api.ListPublishedMeetingTypesRequestObject) (api.ListPublishedMeetingTypesResponseObject, error) {
@@ -119,8 +137,11 @@ func (h *handler) ListPublishedMeetingTypes(context.Context, api.ListPublishedMe
 }
 
 func (h *handler) GetPublishedMeetingType(_ context.Context, request api.GetPublishedMeetingTypeRequestObject) (api.GetPublishedMeetingTypeResponseObject, error) {
-	item, ok := h.calendar.PublishedMeetingType(request.MeetingTypeId)
-	if !ok {
+	item, err := h.calendar.PublishedMeetingType(request.MeetingTypeId)
+	if errors.Is(err, memory.ErrBookingClosed) {
+		return api.GetPublishedMeetingType410JSONResponse{BookingClosedJSONResponse: bookingClosedDTO()}, nil
+	}
+	if err != nil {
 		return api.GetPublishedMeetingType404JSONResponse{MeetingTypeNotFoundJSONResponse: api.MeetingTypeNotFoundJSONResponse{Message: "Тип встречи недоступен"}}, nil
 	}
 	return api.GetPublishedMeetingType200JSONResponse(toDTO(item)), nil
@@ -133,6 +154,9 @@ func (h *handler) ListAvailableSlots(_ context.Context, request api.ListAvailabl
 		date = request.Params.Date.String()
 	}
 	result, err := h.calendar.Available(request.MeetingTypeId, now, h.location, date)
+	if errors.Is(err, memory.ErrBookingClosed) {
+		return api.ListAvailableSlots410JSONResponse{BookingClosedJSONResponse: bookingClosedDTO()}, nil
+	}
 	if errors.Is(err, memory.ErrTypeUnavailable) {
 		return api.ListAvailableSlots404JSONResponse{MeetingTypeNotFoundJSONResponse: api.MeetingTypeNotFoundJSONResponse{Message: "Тип встречи недоступен"}}, nil
 	}
@@ -162,6 +186,9 @@ func (h *handler) ConfirmMeeting(_ context.Context, request api.ConfirmMeetingRe
 	input := request.Body
 	now := h.now()
 	item, day, err := h.calendar.Confirm(input.AttemptId.String(), request.MeetingTypeId, now, h.location, input.Start, input.GuestName, input.GuestEmail)
+	if errors.Is(err, memory.ErrBookingClosed) {
+		return api.ConfirmMeeting410JSONResponse{BookingClosedJSONResponse: bookingClosedDTO()}, nil
+	}
 	if errors.Is(err, memory.ErrAttemptMismatch) {
 		return api.ConfirmMeeting400JSONResponse{Message: "Данные попытки изменились. Начните новую попытку", Fields: map[string]string{"attemptId": "Для новых данных нужна новая попытка"}}, nil
 	}

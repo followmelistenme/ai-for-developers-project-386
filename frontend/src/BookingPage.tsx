@@ -13,6 +13,7 @@ export function BookingPage() {
   const [types, setTypes] = useState<MeetingType[]>([])
   const [loading, setLoading] = useState(true)
   const [failed, setFailed] = useState(false)
+  const [closed, setClosed] = useState(false)
   const [missing, setMissing] = useState(false)
   const [refresh, setRefresh] = useState(0)
 
@@ -24,6 +25,7 @@ export function BookingPage() {
           if (id.includes("/")) { setMissing(true); return }
           const { data, response } = await api.GET("/api/meeting-types/{meetingTypeId}", { params: { path: { meetingTypeId: id } }, signal: controller.signal })
           if (controller.signal.aborted) return
+          if (response.status === 410) { setClosed(true); return }
           if (response.status === 404) { setMissing(true); return }
           if (!response.ok || !data) throw new Error("Failed to load meeting type")
           setTypes([data])
@@ -50,7 +52,7 @@ export function BookingPage() {
       <div className="owner-heading">
         <div>
           <p className="eyebrow">Календарь звонков</p>
-          <h1>{missing ? "Тип встречи недоступен" : detail ? detail.name : id === undefined ? "Выберите тип встречи" : "Тип встречи"}</h1>
+          <h1>{closed ? "Запись на этот тип встречи закрыта" : missing ? "Тип встречи недоступен" : detail ? detail.name : id === undefined ? "Выберите тип встречи" : "Тип встречи"}</h1>
           {id === undefined && <p className="owner-description">Познакомьтесь с форматами звонков и выберите подходящий.</p>}
         </div>
       </div>
@@ -59,17 +61,18 @@ export function BookingPage() {
         <p role="alert">Не удалось загрузить {id === undefined ? "типы встреч" : "тип встречи"}. Проверьте соединение и попробуйте ещё раз.</p>
         <Button variant="outline" onClick={() => { setLoading(true); setFailed(false); setRefresh((value) => value + 1) }}>Попробовать ещё раз</Button>
       </section>}
+      {closed && <p className="owner-description">Владелец календаря окончательно закрыл запись по этой ссылке. Выберите другой тип встречи в каталоге.</p>}
       {missing && <p className="owner-description">Возможно, ссылка устарела или тип ещё не опубликован. Выберите другой тип встречи в каталоге.</p>}
-      {!loading && !failed && !missing && types.length === 0 && <section className="owner-panel owner-empty guest-state" aria-labelledby="guest-empty-heading">
+      {!loading && !failed && !missing && !closed && types.length === 0 && <section className="owner-panel owner-empty guest-state" aria-labelledby="guest-empty-heading">
         <span className="placeholder-icon"><CalendarDays aria-hidden="true" /></span>
         <h2 id="guest-empty-heading">Пока нет опубликованных типов встреч</h2>
         <p className="owner-description">Владелец календаря ещё не открыл типы встреч для гостей. Загляните позже.</p>
       </section>}
-      {!loading && !failed && !missing && detail && <section className="owner-panel guest-detail">
+      {!loading && !failed && !missing && !closed && detail && <section className="owner-panel guest-detail">
         <p className="draft-duration"><Clock3 aria-hidden="true" /> {detail.durationMinutes} минут</p>
         {detail.description && <p className="draft-description">{detail.description}</p>}
       </section>}
-      {!loading && !failed && !missing && detail && <SlotPicker key={detail.id} meetingTypeId={detail.id} />}
+      {!loading && !failed && !missing && !closed && detail && <SlotPicker key={detail.id} meetingTypeId={detail.id} />}
       {!loading && !failed && id === undefined && types.length > 0 && <div className="guest-types">
         {types.map((type) => <article key={type.id} className="owner-panel" aria-labelledby={`guest-type-${type.id}`}>
           <span className="guest-type-icon"><CalendarDays aria-hidden="true" /></span>

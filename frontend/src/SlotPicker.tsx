@@ -27,6 +27,7 @@ export function SlotPicker({ meetingTypeId }: { meetingTypeId: string }) {
   const [guestEmail, setGuestEmail] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [unknown, setUnknown] = useState(false)
+  const [closed, setClosed] = useState(false)
   const [confirmed, setConfirmed] = useState<Meeting | null>(null)
   const [message, setMessage] = useState("")
   const [fields, setFields] = useState<Record<string, string>>({})
@@ -35,11 +36,11 @@ export function SlotPicker({ meetingTypeId }: { meetingTypeId: string }) {
   const inFlight = useRef(false)
   const attempt = useRef<Attempt | null>(null)
   const refresh = useCallback(() => {
-    if (locked.current) return
+    if (locked.current || closed) return
     setSelected(null)
     setView((current) => ({ ...current, loading: true, failed: false }))
     setQuery((current) => ({ ...current, revision: current.revision + 1 }))
-  }, [])
+  }, [closed])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -48,6 +49,9 @@ export function SlotPicker({ meetingTypeId }: { meetingTypeId: string }) {
       try {
         const options = { params: { path: { meetingTypeId }, query: query.date ? { date: query.date } : {} }, signal: controller.signal }
         const result = await api.GET("/api/meeting-types/{meetingTypeId}/slots", options)
+        // An unrelated availability response must not replace a pending or recoverable attempt.
+        if (controller.signal.aborted || locked.current) return
+        if (result.response.status === 410) { setClosed(true); return }
         // A date can leave the live window while the page is open. Ask the server for its new first day.
         if (result.response.status === 400 && query.date && !controller.signal.aborted) {
           setQuery((current) => ({ date: undefined, revision: current.revision + 1 }))
@@ -61,7 +65,7 @@ export function SlotPicker({ meetingTypeId }: { meetingTypeId: string }) {
         const deadline = started + Date.parse(data.nextWindowUpdate) - Date.parse(data.serverTime)
         setView({ data, loading: false, failed: false, missing: false, deadline })
       } catch {
-        if (!controller.signal.aborted) setView((current) => ({ ...current, loading: false, failed: true }))
+        if (!controller.signal.aborted && !locked.current) setView((current) => ({ ...current, loading: false, failed: true }))
       }
     }
     void load()
@@ -116,6 +120,10 @@ export function SlotPicker({ meetingTypeId }: { meetingTypeId: string }) {
         setMessage(result.error.message)
         setFields(result.error.fields)
         allowNewAttempt()
+      } else if (result.response.status === 410) {
+        setClosed(true)
+        setSelected(null)
+        allowNewAttempt()
       } else if (result.response.status === 404) {
         setView((current) => ({ ...current, missing: true }))
         setSelected(null)
@@ -132,6 +140,10 @@ export function SlotPicker({ meetingTypeId }: { meetingTypeId: string }) {
   }
 
   if (confirmed) return <MeetingConfirmation meeting={confirmed} />
+  if (closed && !submitting && !unknown) return <section className="owner-panel slot-state">
+    <p role="alert" className="booking-message">Запись на этот тип встречи закрыта</p>
+    <p className="owner-description">Владелец календаря окончательно закрыл запись по этой ссылке. Выберите другой тип встречи в каталоге.</p>
+  </section>
   const data = view.data
   const ready = data && !view.loading && !view.failed && !view.missing
   return <section className="owner-panel slot-picker" aria-labelledby="slots-heading">

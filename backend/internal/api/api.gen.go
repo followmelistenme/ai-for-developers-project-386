@@ -38,6 +38,21 @@ func (e AvailableSlotsTimeZone) Valid() bool {
 	}
 }
 
+// Defines values for BookingClosedErrorMessage.
+const (
+	ЗаписьНаЭтотТипВстречиЗакрыта BookingClosedErrorMessage = "Запись на этот тип встречи закрыта"
+)
+
+// Valid indicates whether the value is a known member of the BookingClosedErrorMessage enum.
+func (e BookingClosedErrorMessage) Valid() bool {
+	switch e {
+	case ЗаписьНаЭтотТипВстречиЗакрыта:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CreateMeetingTypeDurationMinutes.
 const (
 	CreateMeetingTypeDurationMinutesN15 CreateMeetingTypeDurationMinutes = 15
@@ -90,6 +105,7 @@ func (e MeetingTypeDurationMinutes) Valid() bool {
 const (
 	Draft     MeetingTypeStatus = "draft"
 	Published MeetingTypeStatus = "published"
+	Withdrawn MeetingTypeStatus = "withdrawn"
 )
 
 // Valid indicates whether the value is a known member of the MeetingTypeStatus enum.
@@ -98,6 +114,8 @@ func (e MeetingTypeStatus) Valid() bool {
 	case Draft:
 		return true
 	case Published:
+		return true
+	case Withdrawn:
 		return true
 	default:
 		return false
@@ -139,6 +157,15 @@ type AvailableSlots struct {
 
 // AvailableSlotsTimeZone Часовой пояс календаря; не зависит от окружения сервера или браузера.
 type AvailableSlotsTimeZone string
+
+// BookingClosedError defines model for BookingClosedError.
+type BookingClosedError struct {
+	// Message Окончательное закрытие новых бронирований по прежней ссылке.
+	Message BookingClosedErrorMessage `json:"message"`
+}
+
+// BookingClosedErrorMessage Окончательное закрытие новых бронирований по прежней ссылке.
+type BookingClosedErrorMessage string
 
 // BookingConflict defines model for BookingConflict.
 type BookingConflict struct {
@@ -220,14 +247,14 @@ type MeetingType struct {
 	// Name Название с обрезанными пробелами по краям.
 	Name string `json:"name"`
 
-	// Status Черновик недоступен гостям; опубликованный тип доступен в каталоге.
+	// Status Черновик недоступен гостям; опубликованный тип доступен в каталоге; withdrawn окончательно закрыт без повторной публикации.
 	Status MeetingTypeStatus `json:"status"`
 }
 
 // MeetingTypeDurationMinutes Длительность встречи в минутах.
 type MeetingTypeDurationMinutes int
 
-// MeetingTypeStatus Черновик недоступен гостям; опубликованный тип доступен в каталоге.
+// MeetingTypeStatus Черновик недоступен гостям; опубликованный тип доступен в каталоге; withdrawn окончательно закрыт без повторной публикации.
 type MeetingTypeStatus string
 
 // MeetingTypeList Типы встреч в порядке создания.
@@ -250,6 +277,12 @@ type ValidationError struct {
 
 // MeetingTypeId defines model for MeetingTypeId.
 type MeetingTypeId = string
+
+// BookingClosed defines model for BookingClosed.
+type BookingClosed = BookingClosedError
+
+// InvalidTypeTransition defines model for InvalidTypeTransition.
+type InvalidTypeTransition = MeetingTypeNotFoundError
 
 // MeetingTypeNotFound defines model for MeetingTypeNotFound.
 type MeetingTypeNotFound = MeetingTypeNotFoundError
@@ -289,6 +322,9 @@ type ServerInterface interface {
 	// PublishOwnerMeetingType Опубликовать тип встречи
 	// (POST /api/owner/meeting-types/{meetingTypeId}/publish)
 	PublishOwnerMeetingType(c *gin.Context, meetingTypeId MeetingTypeId)
+	// WithdrawOwnerMeetingType Окончательно снять публикацию типа встречи
+	// (POST /api/owner/meeting-types/{meetingTypeId}/withdraw)
+	WithdrawOwnerMeetingType(c *gin.Context, meetingTypeId MeetingTypeId)
 	// ListOwnerMeetings Предстоящие встречи владельца
 	// (GET /api/owner/meetings)
 	ListOwnerMeetings(c *gin.Context)
@@ -453,6 +489,31 @@ func (siw *ServerInterfaceWrapper) PublishOwnerMeetingType(c *gin.Context) {
 	siw.Handler.PublishOwnerMeetingType(c, meetingTypeId)
 }
 
+// WithdrawOwnerMeetingType operation middleware
+func (siw *ServerInterfaceWrapper) WithdrawOwnerMeetingType(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "meetingTypeId" -------------
+	var meetingTypeId MeetingTypeId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "meetingTypeId", c.Param("meetingTypeId"), &meetingTypeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter meetingTypeId: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.WithdrawOwnerMeetingType(c, meetingTypeId)
+}
+
 // ListOwnerMeetings operation middleware
 func (siw *ServerInterfaceWrapper) ListOwnerMeetings(c *gin.Context) {
 
@@ -496,12 +557,17 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.GET(options.BaseURL+"/api/owner/meeting-types", wrapper.ListOwnerMeetingTypes)
 	router.POST(options.BaseURL+"/api/owner/meeting-types", wrapper.CreateOwnerMeetingType)
 	router.POST(options.BaseURL+"/api/owner/meeting-types/:meetingTypeId/publish", wrapper.PublishOwnerMeetingType)
+	router.POST(options.BaseURL+"/api/owner/meeting-types/:meetingTypeId/withdraw", wrapper.WithdrawOwnerMeetingType)
 	router.GET(options.BaseURL+"/api/meeting-types", wrapper.ListPublishedMeetingTypes)
 	router.GET(options.BaseURL+"/api/meeting-types/:meetingTypeId", wrapper.GetPublishedMeetingType)
 	router.GET(options.BaseURL+"/api/meeting-types/:meetingTypeId/slots", wrapper.ListAvailableSlots)
 	router.GET(options.BaseURL+"/api/owner/meetings", wrapper.ListOwnerMeetings)
 	router.POST(options.BaseURL+"/api/meeting-types/:meetingTypeId/meetings", wrapper.ConfirmMeeting)
 }
+
+type BookingClosedJSONResponse BookingClosedError
+
+type InvalidTypeTransitionJSONResponse MeetingTypeNotFoundError
 
 type MeetingTypeNotFoundJSONResponse MeetingTypeNotFoundError
 
@@ -560,6 +626,20 @@ func (response GetPublishedMeetingType404JSONResponse) VisitGetPublishedMeetingT
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPublishedMeetingType410JSONResponse struct{ BookingClosedJSONResponse }
+
+func (response GetPublishedMeetingType410JSONResponse) VisitGetPublishedMeetingTypeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(410)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -631,6 +711,20 @@ func (response ConfirmMeeting409JSONResponse) VisitConfirmMeetingResponse(w http
 	return err
 }
 
+type ConfirmMeeting410JSONResponse struct{ BookingClosedJSONResponse }
+
+func (response ConfirmMeeting410JSONResponse) VisitConfirmMeetingResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(410)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListAvailableSlotsRequestObject struct {
 	MeetingTypeId MeetingTypeId `json:"meetingTypeId"`
 	Params        ListAvailableSlotsParams
@@ -680,6 +774,20 @@ func (response ListAvailableSlots404JSONResponse) VisitListAvailableSlotsRespons
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAvailableSlots410JSONResponse struct{ BookingClosedJSONResponse }
+
+func (response ListAvailableSlots410JSONResponse) VisitListAvailableSlotsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(410)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -779,6 +887,76 @@ func (response PublishOwnerMeetingType404JSONResponse) VisitPublishOwnerMeetingT
 	return err
 }
 
+type PublishOwnerMeetingType409JSONResponse struct {
+	InvalidTypeTransitionJSONResponse
+}
+
+func (response PublishOwnerMeetingType409JSONResponse) VisitPublishOwnerMeetingTypeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type WithdrawOwnerMeetingTypeRequestObject struct {
+	MeetingTypeId MeetingTypeId `json:"meetingTypeId"`
+}
+
+type WithdrawOwnerMeetingTypeResponseObject interface {
+	VisitWithdrawOwnerMeetingTypeResponse(w http.ResponseWriter) error
+}
+
+type WithdrawOwnerMeetingType200JSONResponse MeetingType
+
+func (response WithdrawOwnerMeetingType200JSONResponse) VisitWithdrawOwnerMeetingTypeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type WithdrawOwnerMeetingType404JSONResponse struct {
+	MeetingTypeNotFoundJSONResponse
+}
+
+func (response WithdrawOwnerMeetingType404JSONResponse) VisitWithdrawOwnerMeetingTypeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type WithdrawOwnerMeetingType409JSONResponse struct {
+	InvalidTypeTransitionJSONResponse
+}
+
+func (response WithdrawOwnerMeetingType409JSONResponse) VisitWithdrawOwnerMeetingTypeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListOwnerMeetingsRequestObject struct {
 }
 
@@ -823,6 +1001,9 @@ type StrictServerInterface interface {
 	// PublishOwnerMeetingType Опубликовать тип встречи
 	// (POST /api/owner/meeting-types/{meetingTypeId}/publish)
 	PublishOwnerMeetingType(ctx context.Context, request PublishOwnerMeetingTypeRequestObject) (PublishOwnerMeetingTypeResponseObject, error)
+	// WithdrawOwnerMeetingType Окончательно снять публикацию типа встречи
+	// (POST /api/owner/meeting-types/{meetingTypeId}/withdraw)
+	WithdrawOwnerMeetingType(ctx context.Context, request WithdrawOwnerMeetingTypeRequestObject) (WithdrawOwnerMeetingTypeResponseObject, error)
 	// ListOwnerMeetings Предстоящие встречи владельца
 	// (GET /api/owner/meetings)
 	ListOwnerMeetings(ctx context.Context, request ListOwnerMeetingsRequestObject) (ListOwnerMeetingsResponseObject, error)
@@ -1098,6 +1279,32 @@ func (sh *strictHandler) PublishOwnerMeetingType(ctx *gin.Context, meetingTypeId
 	}
 }
 
+// WithdrawOwnerMeetingType operation middleware
+func (sh *strictHandler) WithdrawOwnerMeetingType(ctx *gin.Context, meetingTypeId MeetingTypeId) {
+	var request WithdrawOwnerMeetingTypeRequestObject
+
+	request.MeetingTypeId = meetingTypeId
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.WithdrawOwnerMeetingType(ctx, request.(WithdrawOwnerMeetingTypeRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "WithdrawOwnerMeetingType")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		sh.options.HandlerErrorFunc(ctx, err)
+	} else if validResponse, ok := response.(WithdrawOwnerMeetingTypeResponseObject); ok {
+		if err := validResponse.VisitWithdrawOwnerMeetingTypeResponse(ctx.Writer); err != nil {
+			sh.options.ResponseErrorHandlerFunc(ctx, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(ctx, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // ListOwnerMeetings operation middleware
 func (sh *strictHandler) ListOwnerMeetings(ctx *gin.Context) {
 	var request ListOwnerMeetingsRequestObject
@@ -1127,70 +1334,77 @@ func (sh *strictHandler) ListOwnerMeetings(ctx *gin.Context) {
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
+	"mPPdVbPZ/PcA",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

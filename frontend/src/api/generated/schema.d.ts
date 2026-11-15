@@ -42,9 +42,32 @@ export interface paths {
         put?: never;
         /**
          * Опубликовать тип встречи
-         * @description Публикует черновик без изменения его данных. Повтор возвращает тот же опубликованный тип без дублирования. Тело запроса не требуется.
+         * @description Публикует черновик без изменения его данных. Повтор возвращает тот же опубликованный тип без дублирования. Снятый с публикации тип опубликовать повторно нельзя (409). Тело запроса не требуется.
          */
         post: operations["publishOwnerMeetingType"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/owner/meeting-types/{meetingTypeId}/withdraw": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Уникальный идентификатор типа встречи. */
+                meetingTypeId: components["parameters"]["MeetingTypeId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Окончательно снять публикацию типа встречи
+         * @description Опубликованный тип переходит в withdrawn, повтор возвращает тот же тип. Черновик снять нельзя (409). Переход окончательный, встречи и общая занятость сохраняются. Снятие атомарно с подтверждением новой встречи. Тело запроса не требуется.
+         */
+        post: operations["withdrawOwnerMeetingType"];
         delete?: never;
         options?: never;
         head?: never;
@@ -151,7 +174,7 @@ export interface paths {
         put?: never;
         /**
          * Подтвердить запись на звонок
-         * @description Атомарно проверяет опубликованный тип, московское окно, рабочие часы, сетку и отсутствие пересечений для всех типов. Длительность и окончание определяются сервером. Выбор слота не резервирует время. Успешная попытка связывает attemptId с типом, моментом начала и обрезанными по краям именем/email (регистр email сохраняется). Точный повтор возвращает исходную встречу до перезапуска, даже после окончания встречи и выхода даты из окна. Несовпадение данных сохранённой попытки возвращает 400 fields.attemptId без сведений о встрече. Проверка попытки и сохранение атомарны; неуспешные ответы не запоминаются.
+         * @description Атомарно проверяет опубликованный тип, московское окно, рабочие часы, сетку и отсутствие пересечений для всех типов. Длительность и окончание определяются сервером. Выбор слота не резервирует время. Успешная попытка связывает attemptId с типом, моментом начала и обрезанными по краям именем/email (регистр email сохраняется). Точный повтор возвращает исходную встречу до перезапуска, даже после снятия публикации, окончания встречи и выхода даты из окна. Проверка сохранённой попытки предшествует проверке публикации; новая попытка после снятия получает 410. Несовпадение данных сохранённой попытки возвращает 400 fields.attemptId без сведений о встрече. Проверка попытки и сохранение атомарны; неуспешные ответы не запоминаются.
          */
         post: operations["confirmMeeting"];
         delete?: never;
@@ -164,6 +187,13 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        BookingClosedError: {
+            /**
+             * @description Окончательное закрытие новых бронирований по прежней ссылке.
+             * @enum {string}
+             */
+            message: "Запись на этот тип встречи закрыта";
+        };
         ConfirmMeeting: {
             /**
              * Format: uuid
@@ -288,10 +318,10 @@ export interface components {
              */
             durationMinutes: 15 | 30 | 45 | 60;
             /**
-             * @description Черновик недоступен гостям; опубликованный тип доступен в каталоге.
+             * @description Черновик недоступен гостям; опубликованный тип доступен в каталоге; withdrawn окончательно закрыт без повторной публикации.
              * @enum {string}
              */
-            status: "draft" | "published";
+            status: "draft" | "published" | "withdrawn";
         };
         /** @description Типы встреч в порядке создания. */
         MeetingTypeList: components["schemas"]["MeetingType"][];
@@ -305,6 +335,24 @@ export interface components {
         };
     };
     responses: {
+        /** @description Запись на этот тип встречи окончательно закрыта; без сведений о гостях */
+        BookingClosed: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["BookingClosedError"];
+            };
+        };
+        /** @description Переход состояния типа встречи запрещён */
+        InvalidTypeTransition: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["MeetingTypeNotFoundError"];
+            };
+        };
         /** @description Тип встречи не найден или недоступен гостю */
         MeetingTypeNotFound: {
             headers: {
@@ -400,6 +448,32 @@ export interface operations {
                 };
             };
             404: components["responses"]["MeetingTypeNotFound"];
+            409: components["responses"]["InvalidTypeTransition"];
+        };
+    };
+    withdrawOwnerMeetingType: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Уникальный идентификатор типа встречи. */
+                meetingTypeId: components["parameters"]["MeetingTypeId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Снятый с публикации тип встречи */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeetingType"];
+                };
+            };
+            404: components["responses"]["MeetingTypeNotFound"];
+            409: components["responses"]["InvalidTypeTransition"];
         };
     };
     listPublishedMeetingTypes: {
@@ -444,6 +518,7 @@ export interface operations {
                 };
             };
             404: components["responses"]["MeetingTypeNotFound"];
+            410: components["responses"]["BookingClosed"];
         };
     };
     listAvailableSlots: {
@@ -480,6 +555,7 @@ export interface operations {
                 };
             };
             404: components["responses"]["MeetingTypeNotFound"];
+            410: components["responses"]["BookingClosed"];
         };
     };
     listOwnerMeetings: {
@@ -546,6 +622,7 @@ export interface operations {
                     "application/json": components["schemas"]["BookingConflict"];
                 };
             };
+            410: components["responses"]["BookingClosed"];
         };
     };
 }

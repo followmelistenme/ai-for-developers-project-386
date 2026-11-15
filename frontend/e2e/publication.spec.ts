@@ -10,7 +10,7 @@ test("создание, публикация и выбор гостем сохр
   const type = page.getByRole("article", { name: "Знакомство", exact: true })
   await type.getByRole("button", { name: "Опубликовать", exact: true }).click()
   await expect(type.getByText("Опубликован", { exact: true })).toBeVisible()
-  await expect(type.getByRole("button")).toHaveCount(0)
+  await expect(type.getByRole("button", { name: "Снять публикацию", exact: true })).toBeVisible()
   await page.reload()
   await expect(type.getByText("Опубликован", { exact: true })).toBeVisible()
   const link = await type.getByRole("link", { name: "Открыть страницу типа" }).getAttribute("href")

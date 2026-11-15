@@ -24,6 +24,8 @@ export function OwnerPage() {
   const [fields, setFields] = useState<Record<string, string>>({})
   const [publishing, setPublishing] = useState<string[]>([])
   const [publishErrors, setPublishErrors] = useState<Record<string, string>>({})
+  const [withdrawing, setWithdrawing] = useState<string[]>([])
+  const [withdrawErrors, setWithdrawErrors] = useState<Record<string, string>>({})
   const [message, setMessage] = useState("")
   const nameInput = useRef<HTMLInputElement>(null)
 
@@ -101,6 +103,22 @@ export function OwnerPage() {
     }
   }
 
+  async function withdraw(id: string) {
+    if (withdrawing.includes(id)) return
+    setWithdrawing((previous) => [...previous, id])
+    setWithdrawErrors((previous) => ({ ...previous, [id]: "" }))
+    try {
+      const { data, response } = await api.POST("/api/owner/meeting-types/{meetingTypeId}/withdraw", { params: { path: { meetingTypeId: id } } })
+      if (!response.ok || !data) throw new Error("Withdrawal failed")
+      setTypes((previous) => previous.map((type) => type.id === id ? data : type))
+      setMessage("Публикация снята. Существующие встречи сохранены.")
+    } catch {
+      setWithdrawErrors((previous) => ({ ...previous, [id]: "Не удалось снять публикацию. Проверьте соединение и попробуйте ещё раз." }))
+    } finally {
+      setWithdrawing((previous) => previous.filter((item) => item !== id))
+    }
+  }
+
   return (
     <main id="main" className="owner-page container" tabIndex={-1}>
       <div className="owner-heading">
@@ -168,7 +186,7 @@ export function OwnerPage() {
         <div className="owner-types">
           {types.map((type) => (
             <article key={type.id} className="owner-panel draft-card" aria-labelledby={`type-${type.id}`}>
-              <div className="draft-card-heading"><h2 id={`type-${type.id}`}>{type.name}</h2><span className={`draft-badge ${type.status === "published" ? "published-badge" : ""}`}>{type.status === "published" ? "Опубликован" : "Черновик"}</span></div>
+              <div className="draft-card-heading"><h2 id={`type-${type.id}`}>{type.name}</h2><span className={`draft-badge ${type.status === "published" ? "published-badge" : ""}`}>{type.status === "published" ? "Опубликован" : type.status === "withdrawn" ? "Снят с публикации" : "Черновик"}</span></div>
               <p className="draft-duration"><Clock3 aria-hidden="true" /> {type.durationMinutes} минут</p>
               {type.description && <p className="draft-description">{type.description}</p>}
               {type.status === "draft" ? (
@@ -177,8 +195,15 @@ export function OwnerPage() {
                   {publishErrors[type.id] && <p className="field-error" role="alert">{publishErrors[type.id]}</p>}
                   <Button className="publish-button" disabled={publishing.includes(type.id)} onClick={() => { void publish(type.id) }}>{publishing.includes(type.id) ? "Публикуем…" : "Опубликовать"}</Button>
                 </>
+              ) : type.status === "published" ? (
+                <>
+                  <Button asChild variant="outline"><a href={`/booking/${encodeURIComponent(type.id)}`}>Открыть страницу типа</a></Button>
+                  <p className="field-hint" id={`withdraw-hint-${type.id}`}>Снятие публикации окончательно. Новые записи прекратятся, существующие встречи сохранятся. Чтобы открыть запись снова, создайте новый тип встречи.</p>
+                  {withdrawErrors[type.id] && <p className="field-error" role="alert">{withdrawErrors[type.id]}</p>}
+                  <Button variant="outline" aria-describedby={`withdraw-hint-${type.id}`} disabled={withdrawing.includes(type.id)} onClick={() => { void withdraw(type.id) }}>{withdrawing.includes(type.id) ? "Снимаем публикацию…" : "Снять публикацию"}</Button>
+                </>
               ) : (
-                <Button asChild variant="outline"><a href={`/booking/${encodeURIComponent(type.id)}`}>Открыть страницу типа</a></Button>
+                <p className="field-hint">Запись окончательно закрыта. Существующие встречи сохранены. Для новой записи создайте новый тип встречи.</p>
               )}
             </article>
           ))}

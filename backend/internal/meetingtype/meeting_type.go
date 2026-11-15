@@ -14,6 +14,8 @@ const (
 	Draft Status = "draft"
 	// Published is visible to guests.
 	Published Status = "published"
+	// Withdrawn permanently closes new bookings, retaining existing meetings.
+	Withdrawn Status = "withdrawn"
 )
 
 // MeetingType is a saved type owned by the calendar owner.

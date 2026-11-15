@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: Календарь звонков
   version: 0.1.0
-  description: "Типы встреч одного владельца календаря: создание, публикация, гостевой каталог, свободные слоты и подтверждение встречи. Авторизации нет."
+  description: "Типы встреч одного владельца календаря: создание, публикация и окончательное снятие публикации, гостевой каталог, свободные слоты и подтверждение встречи. Авторизации нет."
 paths:
   /api/owner/meeting-types:
     get:
@@ -45,7 +45,7 @@ paths:
     post:
       operationId: publishOwnerMeetingType
       summary: Опубликовать тип встречи
-      description: Публикует черновик без изменения его данных. Повтор возвращает тот же опубликованный тип без дублирования. Тело запроса не требуется.
+      description: Публикует черновик без изменения его данных. Повтор возвращает тот же опубликованный тип без дублирования. Снятый с публикации тип опубликовать повторно нельзя (409). Тело запроса не требуется.
       responses:
         "200":
           description: Опубликованный тип встречи
@@ -55,6 +55,26 @@ paths:
                 $ref: "#/components/schemas/MeetingType"
         "404":
           $ref: "#/components/responses/MeetingTypeNotFound"
+        "409":
+          $ref: "#/components/responses/InvalidTypeTransition"
+  /api/owner/meeting-types/{meetingTypeId}/withdraw:
+    parameters:
+      - $ref: "#/components/parameters/MeetingTypeId"
+    post:
+      operationId: withdrawOwnerMeetingType
+      summary: Окончательно снять публикацию типа встречи
+      description: Опубликованный тип переходит в withdrawn, повтор возвращает тот же тип. Черновик снять нельзя (409). Переход окончательный, встречи и общая занятость сохраняются. Снятие атомарно с подтверждением новой встречи. Тело запроса не требуется.
+      responses:
+        "200":
+          description: Снятый с публикации тип встречи
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeetingType"
+        "404":
+          $ref: "#/components/responses/MeetingTypeNotFound"
+        "409":
+          $ref: "#/components/responses/InvalidTypeTransition"
   /api/meeting-types:
     get:
       operationId: listPublishedMeetingTypes
@@ -81,6 +101,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MeetingType"
+        "410":
+          $ref: "#/components/responses/BookingClosed"
         "404":
           $ref: "#/components/responses/MeetingTypeNotFound"
   /api/meeting-types/{meetingTypeId}/slots:
@@ -111,6 +133,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ValidationError"
+        "410":
+          $ref: "#/components/responses/BookingClosed"
         "404":
           $ref: "#/components/responses/MeetingTypeNotFound"
   /api/owner/meetings:
@@ -131,7 +155,7 @@ paths:
     post:
       operationId: confirmMeeting
       summary: Подтвердить запись на звонок
-      description: Атомарно проверяет опубликованный тип, московское окно, рабочие часы, сетку и отсутствие пересечений для всех типов. Длительность и окончание определяются сервером. Выбор слота не резервирует время. Успешная попытка связывает attemptId с типом, моментом начала и обрезанными по краям именем/email (регистр email сохраняется). Точный повтор возвращает исходную встречу до перезапуска, даже после окончания встречи и выхода даты из окна. Несовпадение данных сохранённой попытки возвращает 400 fields.attemptId без сведений о встрече. Проверка попытки и сохранение атомарны; неуспешные ответы не запоминаются.
+      description: Атомарно проверяет опубликованный тип, московское окно, рабочие часы, сетку и отсутствие пересечений для всех типов. Длительность и окончание определяются сервером. Выбор слота не резервирует время. Успешная попытка связывает attemptId с типом, моментом начала и обрезанными по краям именем/email (регистр email сохраняется). Точный повтор возвращает исходную встречу до перезапуска, даже после снятия публикации, окончания встречи и выхода даты из окна. Проверка сохранённой попытки предшествует проверке публикации; новая попытка после снятия получает 410. Несовпадение данных сохранённой попытки возвращает 400 fields.attemptId без сведений о встрече. Проверка попытки и сохранение атомарны; неуспешные ответы не запоминаются.
       requestBody:
         required: true
         content:
@@ -151,6 +175,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ValidationError"
+        "410":
+          $ref: "#/components/responses/BookingClosed"
         "404":
           $ref: "#/components/responses/MeetingTypeNotFound"
         "409":
@@ -170,6 +196,18 @@ components:
         type: string
         minLength: 1
   responses:
+    BookingClosed:
+      description: Запись на этот тип встречи окончательно закрыта; без сведений о гостях
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/BookingClosedError"
+    InvalidTypeTransition:
+      description: Переход состояния типа встречи запрещён
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/MeetingTypeNotFoundError"
     MeetingTypeNotFound:
       description: Тип встречи не найден или недоступен гостю
       content:
@@ -177,6 +215,15 @@ components:
           schema:
             $ref: "#/components/schemas/MeetingTypeNotFoundError"
   schemas:
+    BookingClosedError:
+      type: object
+      additionalProperties: false
+      required: [message]
+      properties:
+        message:
+          type: string
+          enum: [Запись на этот тип встречи закрыта]
+          description: Окончательное закрытие новых бронирований по прежней ссылке.
     ConfirmMeeting:
       type: object
       additionalProperties: false
@@ -344,8 +391,8 @@ components:
           description: Длительность встречи в минутах.
         status:
           type: string
-          enum: [draft, published]
-          description: Черновик недоступен гостям; опубликованный тип доступен в каталоге.
+          enum: [draft, published, withdrawn]
+          description: Черновик недоступен гостям; опубликованный тип доступен в каталоге; withdrawn окончательно закрыт без повторной публикации.
     MeetingTypeList:
       type: array
       description: Типы встреч в порядке создания.

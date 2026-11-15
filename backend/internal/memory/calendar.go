@@ -38,18 +38,36 @@ func (c *Calendar) MeetingTypes() []meetingtype.MeetingType {
 	return append([]meetingtype.MeetingType{}, c.types...)
 }
 
-// Publish exposes an existing type to guests, preserving all saved fields.
-// Repeated publication returns the same type without adding another entry.
-func (c *Calendar) Publish(id string) (meetingtype.MeetingType, bool) {
+// Publish exposes a draft; a withdrawn type can never be revived.
+func (c *Calendar) Publish(id string) (meetingtype.MeetingType, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for i := range c.types {
 		if c.types[i].ID == id {
+			if c.types[i].Status == meetingtype.Withdrawn {
+				return meetingtype.MeetingType{}, ErrInvalidTransition
+			}
 			c.types[i].Status = meetingtype.Published
-			return c.types[i], true
+			return c.types[i], nil
 		}
 	}
-	return meetingtype.MeetingType{}, false
+	return meetingtype.MeetingType{}, ErrTypeUnavailable
+}
+
+// Withdraw permanently closes new bookings under the same lock used by Confirm.
+func (c *Calendar) Withdraw(id string) (meetingtype.MeetingType, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i := range c.types {
+		if c.types[i].ID == id {
+			if c.types[i].Status == meetingtype.Draft {
+				return meetingtype.MeetingType{}, ErrInvalidTransition
+			}
+			c.types[i].Status = meetingtype.Withdrawn
+			return c.types[i], nil
+		}
+	}
+	return meetingtype.MeetingType{}, ErrTypeUnavailable
 }
 
 // PublishedMeetingTypes returns the guest-visible types in creation order.
@@ -65,17 +83,28 @@ func (c *Calendar) PublishedMeetingTypes() []meetingtype.MeetingType {
 	return result
 }
 
-// PublishedMeetingType returns a type only if guests may view it.
-func (c *Calendar) PublishedMeetingType(id string) (meetingtype.MeetingType, bool) {
+// PublishedMeetingType distinguishes a closed link from a hidden or unknown type.
+func (c *Calendar) PublishedMeetingType(id string) (meetingtype.MeetingType, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	for _, item := range c.types {
-		if item.ID == id && item.Status == meetingtype.Published {
-			return item, true
+		if item.ID == id {
+			if item.Status == meetingtype.Withdrawn {
+				return meetingtype.MeetingType{}, ErrBookingClosed
+			}
+			if item.Status == meetingtype.Published {
+				return item, nil
+			}
 		}
 	}
-	return meetingtype.MeetingType{}, false
+	return meetingtype.MeetingType{}, ErrTypeUnavailable
 }
+
+// ErrInvalidTransition means the requested lifecycle change is forbidden.
+var ErrInvalidTransition = errors.New("invalid meeting type transition")
+
+// ErrBookingClosed means publication has been permanently withdrawn.
+var ErrBookingClosed = errors.New("booking closed")
 
 // ErrTypeUnavailable means guests cannot book the requested type.
 var ErrTypeUnavailable = errors.New("meeting type unavailable")
@@ -106,6 +135,9 @@ func (c *Calendar) Confirm(attemptID, id string, now time.Time, location *time.L
 		return meeting.Meeting{}, availability.Day{}, ErrInvalidContacts
 	}
 	for _, item := range c.types {
+		if item.ID == id && item.Status == meetingtype.Withdrawn {
+			return meeting.Meeting{}, availability.Day{}, ErrBookingClosed
+		}
 		if item.ID == id && item.Status == meetingtype.Published {
 			start = start.In(location)
 			day, err := availability.ForDate(now, location, start.Format(time.DateOnly), item.DurationMinutes)
@@ -147,6 +179,9 @@ func (c *Calendar) Available(id string, now time.Time, location *time.Location, 
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	for _, item := range c.types {
+		if item.ID == id && item.Status == meetingtype.Withdrawn {
+			return availability.Day{}, ErrBookingClosed
+		}
 		if item.ID == id && item.Status == meetingtype.Published {
 			day, err := availability.ForDate(now, location, date, item.DurationMinutes)
 			if err != nil {
