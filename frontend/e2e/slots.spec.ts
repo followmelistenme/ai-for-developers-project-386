@@ -44,6 +44,56 @@ test("слоты показывают загрузку, сетевую ошиб�
   await expect(page.getByRole("button", { name: "09:00–09:30", exact: true })).toHaveAttribute("aria-pressed", "false")
 })
 
+test("ошибка загрузки выбранной даты сохраняет её для повторной попытки", async ({ page, request }) => {
+  const created = await request.post("/api/owner/meeting-types", { data: { name: "Повтор выбранной даты", durationMinutes: 30 } })
+  const type = await created.json() as { id: string }
+  await request.post(`/api/owner/meeting-types/${type.id}/publish`)
+  const available = await (await request.get(`/api/meeting-types/${type.id}/slots`)).json() as { windowEnd: string }
+  await page.goto(`/booking/${type.id}`)
+  await page.getByRole("button", { name: "09:00–09:30", exact: true }).click()
+  await page.route(`**/slots?date=${available.windowEnd}`, (route) => route.abort(), { times: 1 })
+  await page.getByLabel("Дата встречи по Москве").fill(available.windowEnd)
+  await expect(page.getByRole("alert")).toContainText("Не удалось загрузить свободные слоты")
+  await expect(page.getByText("Выбран интервал", { exact: false })).toHaveCount(0)
+  await expect.soft(page.getByLabel("Дата встречи по Москве")).toHaveValue(available.windowEnd)
+  await page.getByRole("button", { name: "Попробовать ещё раз", exact: true }).click()
+  await page.getByRole("button", { name: "09:00–09:30", exact: true }).click()
+  const [year, month, day] = available.windowEnd.split("-")
+  await expect(page.getByRole("status")).toContainText(`${day}.${month}.${year}, 09:00–09:30 по Москве`)
+  await expect(page.getByLabel("Дата встречи по Москве")).toHaveValue(available.windowEnd)
+})
+
+test("возврат фокуса во время загрузки сохраняет выбранную дату", async ({ page, request }) => {
+  const created = await request.post("/api/owner/meeting-types", { data: { name: "Фокус при смене даты", durationMinutes: 30 } })
+  const type = await created.json() as { id: string }
+  await request.post(`/api/owner/meeting-types/${type.id}/publish`)
+  const available = await (await request.get(`/api/meeting-types/${type.id}/slots`)).json() as { windowEnd: string }
+  await page.goto(`/booking/${type.id}`)
+  await page.getByRole("button", { name: "09:00–09:30", exact: true }).click()
+  let release: () => void = () => undefined
+  const held = new Promise<void>((resolve) => { release = resolve })
+  let intercepted: () => void = () => undefined
+  const pending = new Promise<void>((resolve) => { intercepted = resolve })
+  await page.route(`**/slots?date=${available.windowEnd}`, async (route) => {
+    const response = await route.fetch()
+    intercepted()
+    await held
+    await route.fulfill({ response })
+  }, { times: 1 })
+  try {
+    await page.getByLabel("Дата встречи по Москве").fill(available.windowEnd)
+    await pending
+    await expect(page.getByRole("status")).toHaveText("Загружаем свободные слоты…")
+    await expect(page.getByText("Выбран интервал", { exact: false })).toHaveCount(0)
+    await page.evaluate("window.dispatchEvent(new Event('focus'))")
+    await page.getByRole("button", { name: "09:00–09:30", exact: true }).click()
+    release()
+    await expect(page.getByLabel("Дата встречи по Москве")).toHaveValue(available.windowEnd)
+    const [year, month, day] = available.windowEnd.split("-")
+    await expect(page.getByRole("status")).toContainText(`${day}.${month}.${year}, 09:00–09:30 по Москве`)
+  } finally { release() }
+})
+
 test("быстрая смена дат игнорирует старый ответ и повторный вход сбрасывает выбор", async ({ page, request }) => {
   const created = await request.post("/api/owner/meeting-types", { data: { name: "Смена дат", durationMinutes: 15 } })
   const type = await created.json() as { id: string }
@@ -129,10 +179,12 @@ test("возврат фокуса очищает выбор и обновляе�
   await page.evaluate("window.dispatchEvent(new Event('focus'))")
   await expect(page.getByLabel("Дата встречи по Москве")).toHaveValue(available.windowStart)
   await expect(page.getByRole("button", { name: "09:00–09:30", exact: true })).toHaveAttribute("aria-pressed", "false")
-  const refreshed = page.waitForRequest((request) => {
-    const url = new URL(request.url())
-    return url.pathname.endsWith("/slots") && url.searchParams.get("date") === available.windowStart
+  const refreshed = page.waitForResponse((response) => {
+    const url = new URL(response.url())
+    return url.pathname.endsWith("/slots") && !url.searchParams.has("date") && response.ok()
   }, { timeout: 3000 })
   await page.getByRole("button", { name: "Обновить слоты", exact: true }).click()
   await refreshed
+  await expect(page.getByLabel("Дата встречи по Москве")).toHaveValue(available.windowStart)
+  await expect(page.getByRole("button", { name: "09:00–09:30", exact: true })).toHaveAttribute("aria-pressed", "false")
 })

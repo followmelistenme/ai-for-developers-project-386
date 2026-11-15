@@ -21,24 +21,23 @@ export function SlotPicker({ meetingTypeId }: { meetingTypeId: string }) {
   const [query, setQuery] = useState<{ date?: string, revision: number }>({ revision: 0 })
   const [view, setView] = useState<View>({ loading: true, failed: false, missing: false })
   const [selected, setSelected] = useState<Slot | null>(null)
-  const effectiveDate = view.data?.selectedDate
   const refresh = useCallback(() => {
     setSelected(null)
     setView((current) => ({ ...current, loading: true, failed: false }))
-    setQuery((current) => ({ date: effectiveDate, revision: current.revision + 1 }))
-  }, [effectiveDate])
+    setQuery((current) => ({ ...current, revision: current.revision + 1 }))
+  }, [])
 
   useEffect(() => {
     const controller = new AbortController()
     async function load() {
-      let started = performance.now()
+      const started = performance.now()
       try {
         const options = { params: { path: { meetingTypeId }, query: query.date ? { date: query.date } : {} }, signal: controller.signal }
-        let result = await api.GET("/api/meeting-types/{meetingTypeId}/slots", options)
+        const result = await api.GET("/api/meeting-types/{meetingTypeId}/slots", options)
         // A date can leave the live window while the page is open. Ask the server for its new first day.
         if (result.response.status === 400 && query.date && !controller.signal.aborted) {
-          started = performance.now()
-          result = await api.GET("/api/meeting-types/{meetingTypeId}/slots", { params: { path: { meetingTypeId } }, signal: controller.signal })
+          setQuery((current) => ({ date: undefined, revision: current.revision + 1 }))
+          return
         }
         if (controller.signal.aborted) return
         if (result.response.status === 404) { setView({ loading: false, failed: false, missing: true }); return }
@@ -81,7 +80,7 @@ export function SlotPicker({ meetingTypeId }: { meetingTypeId: string }) {
     <p className="owner-description">Все даты и время — по Москве (Europe/Moscow).</p>
     {data && <div className="slot-date-row">
       <label className="slot-date-label" htmlFor="slot-date">Дата встречи по Москве
-        <input id="slot-date" type="date" min={data.windowStart} max={data.windowEnd} value={query.date && view.loading ? query.date : data.selectedDate} onChange={(event) => {
+        <input id="slot-date" type="date" min={data.windowStart} max={data.windowEnd} value={query.date ?? data.selectedDate} onChange={(event) => {
           const date = event.target.value
           if (!date) return
           setSelected(null)
