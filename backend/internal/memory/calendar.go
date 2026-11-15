@@ -29,3 +29,42 @@ func (c *Calendar) MeetingTypes() []meetingtype.MeetingType {
 	defer c.mu.RUnlock()
 	return append([]meetingtype.MeetingType{}, c.types...)
 }
+
+// Publish exposes an existing type to guests, preserving all saved fields.
+// Repeated publication returns the same type without adding another entry.
+func (c *Calendar) Publish(id string) (meetingtype.MeetingType, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i := range c.types {
+		if c.types[i].ID == id {
+			c.types[i].Status = meetingtype.Published
+			return c.types[i], true
+		}
+	}
+	return meetingtype.MeetingType{}, false
+}
+
+// PublishedMeetingTypes returns the guest-visible types in creation order.
+func (c *Calendar) PublishedMeetingTypes() []meetingtype.MeetingType {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	result := []meetingtype.MeetingType{}
+	for _, item := range c.types {
+		if item.Status == meetingtype.Published {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+// PublishedMeetingType returns a type only if guests may view it.
+func (c *Calendar) PublishedMeetingType(id string) (meetingtype.MeetingType, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for _, item := range c.types {
+		if item.ID == id && item.Status == meetingtype.Published {
+			return item, true
+		}
+	}
+	return meetingtype.MeetingType{}, false
+}

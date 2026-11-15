@@ -18,7 +18,8 @@ import (
 // validateRequest applies the contract before the generated strict handler decodes DTOs.
 func validateRequest(router routers.Router) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if c.Request.Method == http.MethodPost {
+		route, params, err := router.FindRoute(c.Request)
+		if err == nil && route.Operation.RequestBody != nil {
 			body, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20))
 			if err != nil || !json.Valid(body) {
 				c.AbortWithStatusJSON(http.StatusBadRequest, api.ValidationError{Message: "Проверьте запрос", Fields: map[string]string{"body": "Некорректный JSON"}})
@@ -26,7 +27,6 @@ func validateRequest(router routers.Router) gin.HandlerFunc {
 			}
 			c.Request.Body = io.NopCloser(bytes.NewReader(body))
 		}
-		route, params, err := router.FindRoute(c.Request)
 		if err == nil {
 			err = openapi3filter.ValidateRequest(c.Request.Context(), &openapi3filter.RequestValidationInput{
 				Request: c.Request, PathParams: params, Route: route,

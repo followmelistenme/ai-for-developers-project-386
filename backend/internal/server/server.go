@@ -76,5 +76,29 @@ func (h *handler) CreateOwnerMeetingType(_ context.Context, request api.CreateOw
 }
 
 func toDTO(draft meetingtype.MeetingType) api.MeetingType {
-	return api.MeetingType{Id: draft.ID, Name: draft.Name, Description: draft.Description, DurationMinutes: api.MeetingTypeDurationMinutes(draft.DurationMinutes), Status: api.Draft}
+	return api.MeetingType{Id: draft.ID, Name: draft.Name, Description: draft.Description, DurationMinutes: api.MeetingTypeDurationMinutes(draft.DurationMinutes), Status: api.MeetingTypeStatus(draft.Status)}
+}
+
+func (h *handler) PublishOwnerMeetingType(_ context.Context, request api.PublishOwnerMeetingTypeRequestObject) (api.PublishOwnerMeetingTypeResponseObject, error) {
+	item, ok := h.calendar.Publish(request.MeetingTypeId)
+	if !ok {
+		return api.PublishOwnerMeetingType404JSONResponse{MeetingTypeNotFoundJSONResponse: api.MeetingTypeNotFoundJSONResponse{Message: "Тип встречи не найден"}}, nil
+	}
+	return api.PublishOwnerMeetingType200JSONResponse(toDTO(item)), nil
+}
+
+func (h *handler) ListPublishedMeetingTypes(context.Context, api.ListPublishedMeetingTypesRequestObject) (api.ListPublishedMeetingTypesResponseObject, error) {
+	result := api.ListPublishedMeetingTypes200JSONResponse{}
+	for _, item := range h.calendar.PublishedMeetingTypes() {
+		result = append(result, toDTO(item))
+	}
+	return result, nil
+}
+
+func (h *handler) GetPublishedMeetingType(_ context.Context, request api.GetPublishedMeetingTypeRequestObject) (api.GetPublishedMeetingTypeResponseObject, error) {
+	item, ok := h.calendar.PublishedMeetingType(request.MeetingTypeId)
+	if !ok {
+		return api.GetPublishedMeetingType404JSONResponse{MeetingTypeNotFoundJSONResponse: api.MeetingTypeNotFoundJSONResponse{Message: "Тип встречи недоступен"}}, nil
+	}
+	return api.GetPublishedMeetingType200JSONResponse(toDTO(item)), nil
 }

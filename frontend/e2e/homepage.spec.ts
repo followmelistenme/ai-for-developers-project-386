@@ -1,6 +1,6 @@
-import { expect, test } from "@playwright/test"
+import { expect, test } from "./fixtures"
 
-test("обе кнопки ведут к временной записи с возвратом на главную", async ({ page }) => {
+test("обе кнопки ведут в каталог с возвратом на главную", async ({ page }) => {
   await page.goto("/")
 
   const bookingLinks = page.getByRole("link", {
@@ -14,9 +14,9 @@ test("обе кнопки ведут к временной записи с во�
     await expect(page).toHaveURL(/\/booking$/)
     await page.reload()
     await expect(
-      page.getByRole("heading", { name: "Запись на звонок", level: 1, exact: true }),
+      page.getByRole("heading", { name: "Выберите тип встречи", level: 1, exact: true }),
     ).toBeVisible()
-    await expect(page.getByText("Онлайн-запись скоро появится", { exact: true })).toBeVisible()
+    await expect(page.getByText("Пока нет опубликованных типов встреч", { exact: true })).toBeVisible()
 
     await page.getByRole("link", { name: "На главную", exact: true }).click()
     await expect(page).toHaveURL("/")
@@ -40,7 +40,7 @@ for (const width of [320, 390]) {
       await expect(bookingLinks.nth(index)).toBeInViewport()
       await expect.poll(contentWidth).toBeLessThanOrEqual(width)
       await bookingLinks.nth(index).click()
-      await expect(page.getByText("Онлайн-запись скоро появится", { exact: true })).toBeVisible()
+      await expect(page.getByText("Пока нет опубликованных типов встреч", { exact: true })).toBeVisible()
       await expect.poll(contentWidth).toBeLessThanOrEqual(width)
       await page.getByRole("link", { name: "На главную", exact: true }).click()
     }

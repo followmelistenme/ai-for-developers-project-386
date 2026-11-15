@@ -28,10 +28,80 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/owner/meeting-types/{meetingTypeId}/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Уникальный идентификатор типа встречи. */
+                meetingTypeId: components["parameters"]["MeetingTypeId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Опубликовать тип встречи
+         * @description Публикует черновик без изменения его данных. Повтор возвращает тот же опубликованный тип без дублирования. Тело запроса не требуется.
+         */
+        post: operations["publishOwnerMeetingType"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/meeting-types": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Каталог опубликованных типов встреч
+         * @description Возвращает только опубликованные типы в порядке создания. Черновики недоступны гостям.
+         */
+        get: operations["listPublishedMeetingTypes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/meeting-types/{meetingTypeId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Уникальный идентификатор типа встречи. */
+                meetingTypeId: components["parameters"]["MeetingTypeId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Опубликованный тип встречи по отдельной ссылке
+         * @description Возвращает опубликованный тип по уникальному идентификатору, независимо от его названия. Черновики и неизвестные идентификаторы недоступны.
+         */
+        get: operations["getPublishedMeetingType"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        MeetingTypeNotFoundError: {
+            /** @description Сообщение о недоступном типе встречи. */
+            message: string;
+        };
         CreateMeetingType: {
             /** @description Название; после обрезки пробелов по краям от 1 до 100 символов Unicode. */
             name: string;
@@ -56,10 +126,10 @@ export interface components {
              */
             durationMinutes: 15 | 30 | 45 | 60;
             /**
-             * @description Сохранённый черновик недоступен гостям для записи.
+             * @description Черновик недоступен гостям; опубликованный тип доступен в каталоге.
              * @enum {string}
              */
-            status: "draft";
+            status: "draft" | "published";
         };
         /** @description Типы встреч в порядке создания. */
         MeetingTypeList: components["schemas"]["MeetingType"][];
@@ -72,8 +142,21 @@ export interface components {
             };
         };
     };
-    responses: never;
-    parameters: never;
+    responses: {
+        /** @description Тип встречи не найден или недоступен гостю */
+        MeetingTypeNotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["MeetingTypeNotFoundError"];
+            };
+        };
+    };
+    parameters: {
+        /** @description Уникальный идентификатор типа встречи. */
+        MeetingTypeId: string;
+    };
     requestBodies: never;
     headers: never;
     pathItems: never;
@@ -131,6 +214,74 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationError"];
                 };
             };
+        };
+    };
+    publishOwnerMeetingType: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Уникальный идентификатор типа встречи. */
+                meetingTypeId: components["parameters"]["MeetingTypeId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Опубликованный тип встречи */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeetingType"];
+                };
+            };
+            404: components["responses"]["MeetingTypeNotFound"];
+        };
+    };
+    listPublishedMeetingTypes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Опубликованные типы встреч; пустой список, если публикаций нет */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeetingTypeList"];
+                };
+            };
+        };
+    };
+    getPublishedMeetingType: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Уникальный идентификатор типа встречи. */
+                meetingTypeId: components["parameters"]["MeetingTypeId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Опубликованный тип встречи */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeetingType"];
+                };
+            };
+            404: components["responses"]["MeetingTypeNotFound"];
         };
     };
 }

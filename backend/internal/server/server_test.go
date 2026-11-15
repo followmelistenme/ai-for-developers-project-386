@@ -75,6 +75,7 @@ func TestInvalidDraftIsRejectedWithFieldErrorsAndNeverSaved(t *testing.T) {
 		{"missing duration", `{"name":"Звонок"}`, "durationMinutes"},
 		{"null name", `{"name":null,"durationMinutes":30}`, "name"},
 		{"null description", `{"name":"Звонок","description":null,"durationMinutes":30}`, "description"},
+		{"oversized body", `{"name":"Звонок","description":"` + strings.Repeat("я", 1<<20) + `","durationMinutes":30}`, "body"},
 		{"malformed JSON", `{"name":`, "body"},
 		{"trailing JSON", `{"name":"Звонок","durationMinutes":30} {}`, "body"},
 		{"extra field", `{"name":"Звонок","durationMinutes":30,"status":"published"}`, "body"},
@@ -185,7 +186,7 @@ func TestConcurrentCreateAndListKeepsEveryDistinctDraft(t *testing.T) {
 	}
 }
 
-func TestContractDocumentationAndNoGuestOrEditDraftRoutes(t *testing.T) {
+func TestContractDocumentationAndNoGuestDraftOrEditRoutes(t *testing.T) {
 	h, err := server.New()
 	if err != nil {
 		t.Fatal(err)
@@ -206,6 +207,7 @@ func TestContractDocumentationAndNoGuestOrEditDraftRoutes(t *testing.T) {
 				"Сохраняет новый черновик. Одинаковые названия разрешены. Черновики недоступны в гостевом интерфейсе.",
 				"CreateMeetingType", "durationMinutes", `"maxLength": 500`,
 				"Некорректный запрос; данные не сохранены", "ValidationError",
+				"POST /api/owner/meeting-types/{meetingTypeId}/publish", "GET /api/meeting-types/{meetingTypeId}", "MeetingTypeNotFoundError",
 				"Сообщения по полям name, description, durationMinutes; body для ошибки всего запроса.",
 			} {
 				if !strings.Contains(body, detail) {
@@ -220,7 +222,7 @@ func TestContractDocumentationAndNoGuestOrEditDraftRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, request := range []struct{ method, path string }{
-		{http.MethodGet, "/api/meeting-types"}, {http.MethodGet, "/api/meeting-types/" + draft.ID},
+		{http.MethodGet, "/api/meeting-types/" + draft.ID},
 		{http.MethodPatch, "/api/owner/meeting-types/" + draft.ID}, {http.MethodPut, "/api/owner/meeting-types/" + draft.ID},
 	} {
 		response := httptest.NewRecorder()
@@ -228,5 +230,106 @@ func TestContractDocumentationAndNoGuestOrEditDraftRoutes(t *testing.T) {
 		if response.Code != http.StatusNotFound {
 			t.Errorf("unexpected route %s %s: %d", request.method, request.path, response.Code)
 		}
+	}
+}
+
+func TestPublicationMakesOnlyPublishedTypeAvailableToGuests(t *testing.T) {
+	h, err := server.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft := post(t, h, `{"name":"Знакомство","description":"Обсудим планы","durationMinutes":45}`)
+	var created struct{ ID string }
+	if err := json.Unmarshal(draft.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/api/meeting-types/" + created.ID, "/api/meeting-types/missing"} {
+		response := request(h, http.MethodGet, path)
+		if response.Code != http.StatusNotFound || !strings.Contains(response.Body.String(), `"message"`) {
+			t.Fatalf("draft/unknown visible: %d %s", response.Code, response.Body.String())
+		}
+	}
+	if response := request(h, http.MethodGet, "/api/meeting-types"); response.Code != http.StatusOK || strings.TrimSpace(response.Body.String()) != "[]" {
+		t.Fatalf("draft listed: %d %s", response.Code, response.Body.String())
+	}
+	published := request(h, http.MethodPost, "/api/owner/meeting-types/"+created.ID+"/publish")
+	if published.Code != http.StatusOK || !strings.Contains(published.Body.String(), `"status":"published"`) {
+		t.Fatalf("publication: %d %s", published.Code, published.Body.String())
+	}
+	var publishedType struct {
+		ID, Name, Description string
+		DurationMinutes       int
+	}
+	if err := json.Unmarshal(published.Body.Bytes(), &publishedType); err != nil {
+		t.Fatal(err)
+	}
+	if publishedType.ID != created.ID || publishedType.Name != "Знакомство" || publishedType.Description != "Обсудим планы" || publishedType.DurationMinutes != 45 {
+		t.Fatalf("publication changed saved fields: %s", published.Body.String())
+	}
+	if detail := request(h, http.MethodGet, "/api/meeting-types/"+created.ID); detail.Body.String() != published.Body.String() {
+		t.Fatalf("detail differs: %s", detail.Body.String())
+	}
+	list := request(h, http.MethodGet, "/api/meeting-types")
+	if list.Code != http.StatusOK || strings.TrimSpace(list.Body.String()) != "["+strings.TrimSpace(published.Body.String())+"]" {
+		t.Fatalf("published not listed: %d %s", list.Code, list.Body.String())
+	}
+	owner := request(h, http.MethodGet, "/api/owner/meeting-types")
+	if owner.Body.String() != list.Body.String() {
+		t.Fatalf("owner status not persisted: %s", owner.Body.String())
+	}
+}
+
+func request(h http.Handler, method, path string) *httptest.ResponseRecorder {
+	response := httptest.NewRecorder()
+	h.ServeHTTP(response, httptest.NewRequest(method, path, nil))
+	return response
+}
+
+func TestRepeatedAndConcurrentPublicationPreservesUniqueTypes(t *testing.T) {
+	h, err := server.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for range 2 {
+		created := post(t, h, `{"name":"Знакомство","durationMinutes":30}`)
+		var item struct{ ID string }
+		if err := json.Unmarshal(created.Body.Bytes(), &item); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, item.ID)
+	}
+	if ids[0] == ids[1] {
+		t.Fatal("duplicate names share an identifier")
+	}
+	var workers sync.WaitGroup
+	for range 24 {
+		workers.Go(func() {
+			for _, id := range ids {
+				result := request(h, http.MethodPost, "/api/owner/meeting-types/"+id+"/publish")
+				if result.Code != http.StatusOK {
+					t.Errorf("publication: %d %s", result.Code, result.Body.String())
+				}
+				if got := request(h, http.MethodGet, "/api/meeting-types/"+id); got.Code != http.StatusOK || got.Body.String() != result.Body.String() {
+					t.Errorf("published read changed: %s", got.Body.String())
+				}
+			}
+			if got := request(h, http.MethodGet, "/api/meeting-types"); got.Code != http.StatusOK {
+				t.Errorf("list: %d", got.Code)
+			}
+		})
+	}
+	workers.Wait()
+	var listed []struct{ ID, Status string }
+	result := request(h, http.MethodGet, "/api/meeting-types")
+	if err := json.Unmarshal(result.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 2 || listed[0].ID != ids[0] || listed[1].ID != ids[1] || listed[0].Status != "published" || listed[1].Status != "published" {
+		t.Fatalf("publication duplicated or reordered types: %s", result.Body.String())
+	}
+	unknown := request(h, http.MethodPost, "/api/owner/meeting-types/missing/publish")
+	if unknown.Code != http.StatusNotFound || !strings.Contains(unknown.Body.String(), `"message"`) {
+		t.Fatalf("unknown publication: %d %s", unknown.Code, unknown.Body.String())
 	}
 }

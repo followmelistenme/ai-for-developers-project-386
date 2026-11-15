@@ -21,6 +21,8 @@ export function OwnerPage() {
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState("")
   const [fields, setFields] = useState<Record<string, string>>({})
+  const [publishing, setPublishing] = useState<string[]>([])
+  const [publishErrors, setPublishErrors] = useState<Record<string, string>>({})
   const [message, setMessage] = useState("")
   const nameInput = useRef<HTMLInputElement>(null)
 
@@ -79,6 +81,22 @@ export function OwnerPage() {
       setSaveError("Не удалось сохранить черновик. Проверьте соединение и попробуйте ещё раз.")
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function publish(id: string) {
+    if (publishing.includes(id)) return
+    setPublishing((previous) => [...previous, id])
+    setPublishErrors((previous) => ({ ...previous, [id]: "" }))
+    try {
+      const { data, response } = await api.POST("/api/owner/meeting-types/{meetingTypeId}/publish", { params: { path: { meetingTypeId: id } } })
+      if (!response.ok || !data) throw new Error("Publication failed")
+      setTypes((previous) => previous.map((type) => type.id === id ? data : type))
+      setMessage("Тип встречи опубликован")
+    } catch {
+      setPublishErrors((previous) => ({ ...previous, [id]: "Не удалось опубликовать тип встречи. Попробуйте ещё раз." }))
+    } finally {
+      setPublishing((previous) => previous.filter((item) => item !== id))
     }
   }
 
@@ -149,10 +167,18 @@ export function OwnerPage() {
         <div className="owner-types">
           {types.map((type) => (
             <article key={type.id} className="owner-panel draft-card" aria-labelledby={`type-${type.id}`}>
-              <div className="draft-card-heading"><h2 id={`type-${type.id}`}>{type.name}</h2><span className="draft-badge">Черновик</span></div>
+              <div className="draft-card-heading"><h2 id={`type-${type.id}`}>{type.name}</h2><span className={`draft-badge ${type.status === "published" ? "published-badge" : ""}`}>{type.status === "published" ? "Опубликован" : "Черновик"}</span></div>
               <p className="draft-duration"><Clock3 aria-hidden="true" /> {type.durationMinutes} минут</p>
               {type.description && <p className="draft-description">{type.description}</p>}
-              <p className="field-hint">Недоступен гостям для записи</p>
+              {type.status === "draft" ? (
+                <>
+                  <p className="field-hint">Недоступен гостям. Опубликуйте тип, чтобы он появился в каталоге.</p>
+                  {publishErrors[type.id] && <p className="field-error" role="alert">{publishErrors[type.id]}</p>}
+                  <Button className="publish-button" disabled={publishing.includes(type.id)} onClick={() => { void publish(type.id) }}>{publishing.includes(type.id) ? "Публикуем…" : "Опубликовать"}</Button>
+                </>
+              ) : (
+                <Button asChild variant="outline"><a href={`/booking/${encodeURIComponent(type.id)}`}>Открыть страницу типа</a></Button>
+              )}
             </article>
           ))}
         </div>

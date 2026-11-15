@@ -71,13 +71,16 @@ func (e MeetingTypeDurationMinutes) Valid() bool {
 
 // Defines values for MeetingTypeStatus.
 const (
-	Draft MeetingTypeStatus = "draft"
+	Draft     MeetingTypeStatus = "draft"
+	Published MeetingTypeStatus = "published"
 )
 
 // Valid indicates whether the value is a known member of the MeetingTypeStatus enum.
 func (e MeetingTypeStatus) Valid() bool {
 	switch e {
 	case Draft:
+		return true
+	case Published:
 		return true
 	default:
 		return false
@@ -113,18 +116,24 @@ type MeetingType struct {
 	// Name Название с обрезанными пробелами по краям.
 	Name string `json:"name"`
 
-	// Status Сохранённый черновик недоступен гостям для записи.
+	// Status Черновик недоступен гостям; опубликованный тип доступен в каталоге.
 	Status MeetingTypeStatus `json:"status"`
 }
 
 // MeetingTypeDurationMinutes Длительность встречи в минутах.
 type MeetingTypeDurationMinutes int
 
-// MeetingTypeStatus Сохранённый черновик недоступен гостям для записи.
+// MeetingTypeStatus Черновик недоступен гостям; опубликованный тип доступен в каталоге.
 type MeetingTypeStatus string
 
 // MeetingTypeList Типы встреч в порядке создания.
 type MeetingTypeList = []MeetingType
+
+// MeetingTypeNotFoundError defines model for MeetingTypeNotFoundError.
+type MeetingTypeNotFoundError struct {
+	// Message Сообщение о недоступном типе встречи.
+	Message string `json:"message"`
+}
 
 // ValidationError defines model for ValidationError.
 type ValidationError struct {
@@ -135,17 +144,32 @@ type ValidationError struct {
 	Message string `json:"message"`
 }
 
+// MeetingTypeId defines model for MeetingTypeId.
+type MeetingTypeId = string
+
+// MeetingTypeNotFound defines model for MeetingTypeNotFound.
+type MeetingTypeNotFound = MeetingTypeNotFoundError
+
 // CreateOwnerMeetingTypeJSONRequestBody defines body for CreateOwnerMeetingType for application/json ContentType.
 type CreateOwnerMeetingTypeJSONRequestBody = CreateMeetingType
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// ListPublishedMeetingTypes Каталог опубликованных типов встреч
+	// (GET /api/meeting-types)
+	ListPublishedMeetingTypes(c *gin.Context)
+	// GetPublishedMeetingType Опубликованный тип встречи по отдельной ссылке
+	// (GET /api/meeting-types/{meetingTypeId})
+	GetPublishedMeetingType(c *gin.Context, meetingTypeId MeetingTypeId)
 	// ListOwnerMeetingTypes Список типов встреч владельца
 	// (GET /api/owner/meeting-types)
 	ListOwnerMeetingTypes(c *gin.Context)
 	// CreateOwnerMeetingType Создать черновик типа встречи
 	// (POST /api/owner/meeting-types)
 	CreateOwnerMeetingType(c *gin.Context)
+	// PublishOwnerMeetingType Опубликовать тип встречи
+	// (POST /api/owner/meeting-types/{meetingTypeId}/publish)
+	PublishOwnerMeetingType(c *gin.Context, meetingTypeId MeetingTypeId)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -156,6 +180,44 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(c *gin.Context)
+
+// ListPublishedMeetingTypes operation middleware
+func (siw *ServerInterfaceWrapper) ListPublishedMeetingTypes(c *gin.Context) {
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.ListPublishedMeetingTypes(c)
+}
+
+// GetPublishedMeetingType operation middleware
+func (siw *ServerInterfaceWrapper) GetPublishedMeetingType(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "meetingTypeId" -------------
+	var meetingTypeId MeetingTypeId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "meetingTypeId", c.Param("meetingTypeId"), &meetingTypeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter meetingTypeId: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetPublishedMeetingType(c, meetingTypeId)
+}
 
 // ListOwnerMeetingTypes operation middleware
 func (siw *ServerInterfaceWrapper) ListOwnerMeetingTypes(c *gin.Context) {
@@ -181,6 +243,31 @@ func (siw *ServerInterfaceWrapper) CreateOwnerMeetingType(c *gin.Context) {
 	}
 
 	siw.Handler.CreateOwnerMeetingType(c)
+}
+
+// PublishOwnerMeetingType operation middleware
+func (siw *ServerInterfaceWrapper) PublishOwnerMeetingType(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "meetingTypeId" -------------
+	var meetingTypeId MeetingTypeId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "meetingTypeId", c.Param("meetingTypeId"), &meetingTypeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter meetingTypeId: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.PublishOwnerMeetingType(c, meetingTypeId)
 }
 
 // GinServerOptions provides options for the Gin server.
@@ -212,6 +299,70 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 
 	router.GET(options.BaseURL+"/api/owner/meeting-types", wrapper.ListOwnerMeetingTypes)
 	router.POST(options.BaseURL+"/api/owner/meeting-types", wrapper.CreateOwnerMeetingType)
+	router.POST(options.BaseURL+"/api/owner/meeting-types/:meetingTypeId/publish", wrapper.PublishOwnerMeetingType)
+	router.GET(options.BaseURL+"/api/meeting-types", wrapper.ListPublishedMeetingTypes)
+	router.GET(options.BaseURL+"/api/meeting-types/:meetingTypeId", wrapper.GetPublishedMeetingType)
+}
+
+type MeetingTypeNotFoundJSONResponse MeetingTypeNotFoundError
+
+type ListPublishedMeetingTypesRequestObject struct {
+}
+
+type ListPublishedMeetingTypesResponseObject interface {
+	VisitListPublishedMeetingTypesResponse(w http.ResponseWriter) error
+}
+
+type ListPublishedMeetingTypes200JSONResponse MeetingTypeList
+
+func (response ListPublishedMeetingTypes200JSONResponse) VisitListPublishedMeetingTypesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPublishedMeetingTypeRequestObject struct {
+	MeetingTypeId MeetingTypeId `json:"meetingTypeId"`
+}
+
+type GetPublishedMeetingTypeResponseObject interface {
+	VisitGetPublishedMeetingTypeResponse(w http.ResponseWriter) error
+}
+
+type GetPublishedMeetingType200JSONResponse MeetingType
+
+func (response GetPublishedMeetingType200JSONResponse) VisitGetPublishedMeetingTypeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPublishedMeetingType404JSONResponse struct {
+	MeetingTypeNotFoundJSONResponse
+}
+
+func (response GetPublishedMeetingType404JSONResponse) VisitGetPublishedMeetingTypeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
 }
 
 type ListOwnerMeetingTypesRequestObject struct {
@@ -271,14 +422,61 @@ func (response CreateOwnerMeetingType400JSONResponse) VisitCreateOwnerMeetingTyp
 	return err
 }
 
+type PublishOwnerMeetingTypeRequestObject struct {
+	MeetingTypeId MeetingTypeId `json:"meetingTypeId"`
+}
+
+type PublishOwnerMeetingTypeResponseObject interface {
+	VisitPublishOwnerMeetingTypeResponse(w http.ResponseWriter) error
+}
+
+type PublishOwnerMeetingType200JSONResponse MeetingType
+
+func (response PublishOwnerMeetingType200JSONResponse) VisitPublishOwnerMeetingTypeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PublishOwnerMeetingType404JSONResponse struct {
+	MeetingTypeNotFoundJSONResponse
+}
+
+func (response PublishOwnerMeetingType404JSONResponse) VisitPublishOwnerMeetingTypeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
+	// ListPublishedMeetingTypes Каталог опубликованных типов встреч
+	// (GET /api/meeting-types)
+	ListPublishedMeetingTypes(ctx context.Context, request ListPublishedMeetingTypesRequestObject) (ListPublishedMeetingTypesResponseObject, error)
+	// GetPublishedMeetingType Опубликованный тип встречи по отдельной ссылке
+	// (GET /api/meeting-types/{meetingTypeId})
+	GetPublishedMeetingType(ctx context.Context, request GetPublishedMeetingTypeRequestObject) (GetPublishedMeetingTypeResponseObject, error)
 	// ListOwnerMeetingTypes Список типов встреч владельца
 	// (GET /api/owner/meeting-types)
 	ListOwnerMeetingTypes(ctx context.Context, request ListOwnerMeetingTypesRequestObject) (ListOwnerMeetingTypesResponseObject, error)
 	// CreateOwnerMeetingType Создать черновик типа встречи
 	// (POST /api/owner/meeting-types)
 	CreateOwnerMeetingType(ctx context.Context, request CreateOwnerMeetingTypeRequestObject) (CreateOwnerMeetingTypeResponseObject, error)
+	// PublishOwnerMeetingType Опубликовать тип встречи
+	// (POST /api/owner/meeting-types/{meetingTypeId}/publish)
+	PublishOwnerMeetingType(ctx context.Context, request PublishOwnerMeetingTypeRequestObject) (PublishOwnerMeetingTypeResponseObject, error)
 }
 
 type StrictHandlerFunc func(ctx *gin.Context, request any) (any, error)
@@ -336,6 +534,56 @@ type strictHandler struct {
 	ssi         StrictServerInterface
 	middlewares []StrictMiddlewareFunc
 	options     StrictGinServerOptions
+}
+
+// ListPublishedMeetingTypes operation middleware
+func (sh *strictHandler) ListPublishedMeetingTypes(ctx *gin.Context) {
+	var request ListPublishedMeetingTypesRequestObject
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.ListPublishedMeetingTypes(ctx, request.(ListPublishedMeetingTypesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListPublishedMeetingTypes")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		sh.options.HandlerErrorFunc(ctx, err)
+	} else if validResponse, ok := response.(ListPublishedMeetingTypesResponseObject); ok {
+		if err := validResponse.VisitListPublishedMeetingTypesResponse(ctx.Writer); err != nil {
+			sh.options.ResponseErrorHandlerFunc(ctx, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(ctx, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetPublishedMeetingType operation middleware
+func (sh *strictHandler) GetPublishedMeetingType(ctx *gin.Context, meetingTypeId MeetingTypeId) {
+	var request GetPublishedMeetingTypeRequestObject
+
+	request.MeetingTypeId = meetingTypeId
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.GetPublishedMeetingType(ctx, request.(GetPublishedMeetingTypeRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetPublishedMeetingType")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		sh.options.HandlerErrorFunc(ctx, err)
+	} else if validResponse, ok := response.(GetPublishedMeetingTypeResponseObject); ok {
+		if err := validResponse.VisitGetPublishedMeetingTypeResponse(ctx.Writer); err != nil {
+			sh.options.ResponseErrorHandlerFunc(ctx, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(ctx, fmt.Errorf("unexpected response type: %T", response))
+	}
 }
 
 // ListOwnerMeetingTypes operation middleware
@@ -404,32 +652,66 @@ func (sh *strictHandler) CreateOwnerMeetingType(ctx *gin.Context) {
 	}
 }
 
+// PublishOwnerMeetingType operation middleware
+func (sh *strictHandler) PublishOwnerMeetingType(ctx *gin.Context, meetingTypeId MeetingTypeId) {
+	var request PublishOwnerMeetingTypeRequestObject
+
+	request.MeetingTypeId = meetingTypeId
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.PublishOwnerMeetingType(ctx, request.(PublishOwnerMeetingTypeRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PublishOwnerMeetingType")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		sh.options.HandlerErrorFunc(ctx, err)
+	} else if validResponse, ok := response.(PublishOwnerMeetingTypeResponseObject); ok {
+		if err := validResponse.VisitPublishOwnerMeetingTypeResponse(ctx.Writer); err != nil {
+			sh.options.ResponseErrorHandlerFunc(ctx, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(ctx, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // Base64 encoded, compressed with deflate, json marshaled OpenAPI spec.
 // Stored as a slice of fixed-width chunks rather than one concatenated
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
+	"2MPp8rB0OYd1B1GZxH82EXS4Ynn1wUEQ/DoA",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

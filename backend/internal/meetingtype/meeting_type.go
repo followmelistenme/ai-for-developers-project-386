@@ -6,9 +6,20 @@ import (
 	"unicode/utf8"
 )
 
-// MeetingType is a saved draft owned by the calendar owner.
+// Status determines whether guests can view a meeting type.
+type Status string
+
+const (
+	// Draft is visible only to the calendar owner.
+	Draft Status = "draft"
+	// Published is visible to guests.
+	Published Status = "published"
+)
+
+// MeetingType is a saved type owned by the calendar owner.
 type MeetingType struct {
 	ID              string
+	Status          Status
 	Name            string
 	Description     string
 	DurationMinutes int
@@ -29,5 +40,5 @@ func NewDraft(name, description string, durationMinutes int) (MeetingType, map[s
 	default:
 		fields["durationMinutes"] = "Выберите 15, 30, 45 или 60 минут"
 	}
-	return MeetingType{Name: name, Description: description, DurationMinutes: durationMinutes}, fields
+	return MeetingType{Status: Draft, Name: name, Description: description, DurationMinutes: durationMinutes}, fields
 }

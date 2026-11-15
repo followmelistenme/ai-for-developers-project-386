@@ -1,5 +1,4 @@
 import {
-  ArrowLeft,
   ArrowUpRight,
   CalendarCheck2,
   CalendarDays,
@@ -13,6 +12,7 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { OwnerPage } from "@/OwnerPage"
+import { BookingPage } from "@/BookingPage"
 
 function Brand() {
   return (
@@ -96,22 +96,8 @@ function BookingPreview() {
   )
 }
 
-function BookingPlaceholder() {
-  return (
-    <main id="main" className="booking-placeholder" tabIndex={-1}>
-      <div className="placeholder-icon"><CalendarDays aria-hidden="true" /></div>
-      <p className="eyebrow">Календарь звонков</p>
-      <h1>Запись на звонок</h1>
-      <p className="placeholder-description">Онлайн-запись скоро появится</p>
-      <Button asChild variant="outline" className="back-link">
-        <a href="/"><ArrowLeft aria-hidden="true" /> На главную</a>
-      </Button>
-    </main>
-  )
-}
-
 export default function App() {
-  const isBookingPage = window.location.pathname === "/booking"
+  const isBookingPage = window.location.pathname === "/booking" || window.location.pathname.startsWith("/booking/")
   const isOwnerPage = window.location.pathname === "/owner"
 
   return (
@@ -129,7 +115,7 @@ export default function App() {
           </nav>
         </div>
       </header>
-      {isOwnerPage ? <OwnerPage /> : isBookingPage ? <BookingPlaceholder /> : (
+      {isOwnerPage ? <OwnerPage /> : isBookingPage ? <BookingPage /> : (
         <main id="main" tabIndex={-1}>
           <section className="container hero" aria-labelledby="hero-title">
             <div className="hero-copy">

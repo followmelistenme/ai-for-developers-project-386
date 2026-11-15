@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test"
+import { expect, test } from "./fixtures"
 
 test("владелец создаёт черновик через настоящий API и видит его после перезагрузки", async ({ page }) => {
   const errors: string[] = []
@@ -18,7 +18,7 @@ test("владелец создаёт черновик через настоящ
   await expect(draft.getByText("Черновик", { exact: true })).toBeVisible()
   await expect(draft.getByText("45 минут", { exact: true })).toBeVisible()
   await expect(draft.getByText("Обсудим <b>планы</b> и познакомимся.", { exact: true })).toBeVisible()
-  await expect(draft.getByRole("button")).toHaveCount(0)
+  await expect(draft.getByRole("button", { name: "Опубликовать", exact: true })).toBeVisible()
   for (const width of [320, 390]) {
     await page.setViewportSize({ width, height: 844 })
     await expect(page.getByRole("heading", { name: "Типы встреч", exact: true })).toBeVisible()
