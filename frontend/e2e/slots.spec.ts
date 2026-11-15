@@ -15,7 +15,7 @@ test("гость выбирает дату и интервал по Москве
   await expect(page.getByText("Выбран интервал", { exact: false })).toHaveCount(0)
   await page.getByRole("button", { name: "17:00–17:45", exact: true }).click()
   await expect(page.getByRole("status")).toContainText("17:00–17:45")
-  await expect(page.getByRole("button", { name: /подтвердить|записаться/i })).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Подтвердить запись", exact: true })).toBeVisible()
   await page.reload()
   await expect(page.getByLabel("Дата встречи по Москве")).toHaveValue(available.windowStart)
   await expect(page.getByText("Выбран интервал", { exact: false })).toHaveCount(0)

@@ -117,10 +117,97 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/owner/meetings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Предстоящие встречи владельца
+         * @description Все типы, включая уже начавшиеся встречи, пока end больше текущего времени. Порядок по началу от ближайших. Контакты доступны только здесь и в результате подтверждения; авторизации нет.
+         */
+        get: operations["listOwnerMeetings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/meeting-types/{meetingTypeId}/meetings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Уникальный идентификатор типа встречи. */
+                meetingTypeId: components["parameters"]["MeetingTypeId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Подтвердить запись на звонок
+         * @description Атомарно проверяет опубликованный тип, московское окно, рабочие часы, сетку и отсутствие пересечений для всех типов. Длительность и окончание определяются сервером. Выбор слота не резервирует время. Повтор не имеет гарантии идемпотентности.
+         */
+        post: operations["confirmMeeting"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        ConfirmMeeting: {
+            /**
+             * Format: date-time
+             * @description Начало выбранного слота в RFC 3339; проверяется по Europe/Moscow.
+             */
+            start: string;
+            /** @description Обязательное имя, 1–100 символов Unicode после обрезки пробелов по краям. */
+            guestName: string;
+            /** @description Обязательный адрес email корректного формата, до 254 символов после обрезки пробелов по краям. Подтверждение письмом не выполняется. */
+            guestEmail: string;
+        };
+        Meeting: {
+            /** @description Уникальный идентификатор созданной встречи. */
+            id: string;
+            meetingType: components["schemas"]["MeetingType"];
+            /**
+             * Format: date
+             * @description Календарная дата встречи по Europe/Moscow.
+             */
+            date: string;
+            /**
+             * Format: date-time
+             * @description Начало включительно, RFC 3339 по Москве.
+             */
+            start: string;
+            /**
+             * Format: date-time
+             * @description Окончание исключительно, рассчитано из длительности типа, RFC 3339 по Москве.
+             */
+            end: string;
+            /** @description Имя гостя с обрезанными пробелами по краям. */
+            guestName: string;
+            /** @description Email гостя с обрезанными пробелами по краям. */
+            guestEmail: string;
+            /** @description Демонстрационная ссылка http://localhost/event/{event_id}, идентификатор встречи. Реальная видеосвязь и страница ссылки не реализуются. */
+            callUrl: string;
+        };
+        /** @description Встречи с end больше текущего времени, по возрастанию start. */
+        MeetingList: components["schemas"]["Meeting"][];
+        BookingConflict: {
+            /** @description Сообщение о занятом интервале. */
+            message: string;
+            availability: components["schemas"]["AvailableSlots"];
+        };
         /** @description Свободный интервал; выбор не создаёт встречу. */
         AvailableSlot: {
             /**
@@ -206,7 +293,7 @@ export interface components {
         ValidationError: {
             /** @description Общее сообщение об ошибке. */
             message: string;
-            /** @description Сообщения по полям name, description, durationMinutes, date; body для ошибки всего запроса. */
+            /** @description Сообщения по полям name, description, durationMinutes, date, start, guestName, guestEmail; body для ошибки всего запроса. */
             fields: {
                 [key: string]: string;
             };
@@ -388,6 +475,72 @@ export interface operations {
                 };
             };
             404: components["responses"]["MeetingTypeNotFound"];
+        };
+    };
+    listOwnerMeetings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Предстоящие и продолжающиеся встречи, пустой массив при отсутствии */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeetingList"];
+                };
+            };
+        };
+    };
+    confirmMeeting: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Уникальный идентификатор типа встречи. */
+                meetingTypeId: components["parameters"]["MeetingTypeId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmMeeting"];
+            };
+        };
+        responses: {
+            /** @description Встреча создана, сохраните сведения самостоятельно; писем и напоминаний нет */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Meeting"];
+                };
+            };
+            /** @description Некорректные контакты или начало вне текущих правил записи; встреча не создана */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationError"];
+                };
+            };
+            404: components["responses"]["MeetingTypeNotFound"];
+            /** @description Интервал уже занят; актуальные свободные слоты выбранной московской даты без сведений о других гостях */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookingConflict"];
+                };
+            };
         };
     };
 }

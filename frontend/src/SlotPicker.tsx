@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { CalendarDays, RefreshCw } from "lucide-react"
+import { MeetingConfirmation, type Meeting } from "@/MeetingDetails"
 import { api } from "@/api/client"
 import type { components } from "@/api/generated/schema"
 import { Button } from "@/components/ui/button"
@@ -21,7 +22,17 @@ export function SlotPicker({ meetingTypeId }: { meetingTypeId: string }) {
   const [query, setQuery] = useState<{ date?: string, revision: number }>({ revision: 0 })
   const [view, setView] = useState<View>({ loading: true, failed: false, missing: false })
   const [selected, setSelected] = useState<Slot | null>(null)
+  const [guestName, setGuestName] = useState("")
+  const [guestEmail, setGuestEmail] = useState("")
+  const [submitting, setSubmitting] = useState(false)
+  const [unknown, setUnknown] = useState(false)
+  const [confirmed, setConfirmed] = useState<Meeting | null>(null)
+  const [message, setMessage] = useState("")
+  const [fields, setFields] = useState<Record<string, string>>({})
+  // A pending request can already have saved the meeting. Refresh never changes its state.
+  const locked = useRef(false)
   const refresh = useCallback(() => {
+    if (locked.current) return
     setSelected(null)
     setView((current) => ({ ...current, loading: true, failed: false }))
     setQuery((current) => ({ ...current, revision: current.revision + 1 }))
@@ -70,6 +81,41 @@ export function SlotPicker({ meetingTypeId }: { meetingTypeId: string }) {
     return () => window.clearTimeout(timer)
   }, [view.deadline, view.loading, view.failed, refresh])
 
+  async function confirm() {
+    if (!selected || locked.current) return
+    locked.current = true
+    setSubmitting(true)
+    setMessage("")
+    setFields({})
+    try {
+      const result = await api.POST("/api/meeting-types/{meetingTypeId}/meetings", { params: { path: { meetingTypeId } }, body: { start: selected.start, guestName, guestEmail } })
+      if (result.response.status === 201 && result.data) {
+        setConfirmed(result.data)
+      } else if (result.response.status === 409 && result.error && "availability" in result.error) {
+        const data = result.error.availability
+        setView({ data, loading: false, failed: false, missing: false, deadline: performance.now() + Date.parse(data.nextWindowUpdate) - Date.parse(data.serverTime) })
+        setSelected(null)
+        setMessage(result.error.message)
+        locked.current = false
+      } else if (result.response.status === 400 && result.error && "fields" in result.error) {
+        setMessage(result.error.message)
+        setFields(result.error.fields)
+        locked.current = false
+      } else if (result.response.status === 404) {
+        setView((current) => ({ ...current, missing: true }))
+        setSelected(null)
+        locked.current = false
+      } else {
+        setUnknown(true)
+      }
+    } catch {
+      setUnknown(true)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  if (confirmed) return <MeetingConfirmation meeting={confirmed} />
   const data = view.data
   const ready = data && !view.loading && !view.failed && !view.missing
   return <section className="owner-panel slot-picker" aria-labelledby="slots-heading">
@@ -80,7 +126,7 @@ export function SlotPicker({ meetingTypeId }: { meetingTypeId: string }) {
     <p className="owner-description">Все даты и время — по Москве (Europe/Moscow).</p>
     {data && <div className="slot-date-row">
       <label className="slot-date-label" htmlFor="slot-date">Дата встречи по Москве
-        <input id="slot-date" type="date" min={data.windowStart} max={data.windowEnd} value={query.date ?? data.selectedDate} onChange={(event) => {
+        <input id="slot-date" disabled={submitting || unknown} type="date" min={data.windowStart} max={data.windowEnd} value={query.date ?? data.selectedDate} onChange={(event) => {
           const date = event.target.value
           if (!date) return
           setSelected(null)
@@ -90,16 +136,37 @@ export function SlotPicker({ meetingTypeId }: { meetingTypeId: string }) {
       </label>
       <p className="field-hint">Окно записи: {dateLabel(data.windowStart)}–{dateLabel(data.windowEnd)}</p>
     </div>}
+    {message && <p role="alert" className="booking-message">{message}</p>}
+    {unknown && <p role="alert" className="booking-message">Результат подтверждения неизвестен. Встреча могла быть создана. Не повторяйте отправку, пока не уточните результат.</p>}
     {view.loading && <p role="status" className="owner-description">Загружаем свободные слоты…</p>}
     {view.failed && <div className="slot-state"><p role="alert">Не удалось загрузить свободные слоты. Проверьте соединение и попробуйте ещё раз.</p><Button variant="outline" onClick={refresh}>Попробовать ещё раз</Button></div>}
     {view.missing && <p role="alert">Тип встречи больше недоступен. Выберите другой тип в каталоге.</p>}
     {ready && <>
-      <div className="slots-date-heading"><h3>{dateLabel(data.selectedDate)}</h3><Button variant="ghost" size="sm" onClick={refresh}><RefreshCw aria-hidden="true" /> Обновить слоты</Button></div>
+      <div className="slots-date-heading"><h3>{dateLabel(data.selectedDate)}</h3><Button variant="ghost" size="sm" disabled={submitting || unknown} onClick={refresh}><RefreshCw aria-hidden="true" /> Обновить слоты</Button></div>
       {data.slots.length === 0 ? <p role="status" className="owner-description">На эту дату нет свободных слотов. Выберите другую дату.</p> : <div className="slot-grid" role="group" aria-label="Свободные слоты по Москве">{data.slots.map((slot) => {
         const pressed = selected?.start === slot.start
-        return <Button key={slot.start} variant={pressed ? "default" : "outline"} className="slot-button" aria-pressed={pressed} onClick={() => setSelected(slot)}>{timeLabel(slot.start, data.timeZone)}–{timeLabel(slot.end, data.timeZone)}</Button>
+        return <Button key={slot.start} variant={pressed ? "default" : "outline"} className="slot-button" aria-pressed={pressed} disabled={submitting || unknown} onClick={() => setSelected(slot)}>{timeLabel(slot.start, data.timeZone)}–{timeLabel(slot.end, data.timeZone)}</Button>
       })}</div>}
-      {selected && <div className="slot-summary" role="status"><strong>Выбран интервал</strong><span>{dateLabel(data.selectedDate)}, {timeLabel(selected.start, data.timeZone)}–{timeLabel(selected.end, data.timeZone)} по Москве</span><p>Выбор не резервирует время. Запись на звонок пока недоступна.</p></div>}
+      {selected && <div className="slot-summary" role="status"><strong>Выбран интервал</strong><span>{dateLabel(data.selectedDate)}, {timeLabel(selected.start, data.timeZone)}–{timeLabel(selected.end, data.timeZone)} по Москве</span><p>Выбор не резервирует время. При подтверждении мы снова проверим доступность.</p></div>}
     </>}
+    {selected && ready && <form className="draft-form" noValidate aria-labelledby="guest-form-heading" onSubmit={(event) => { event.preventDefault(); void confirm() }}>
+      <h3 id="guest-form-heading">Подтвердите запись</h3>
+      <div className="form-field">
+        <label htmlFor="guest-name">Ваше имя</label>
+        <input id="guest-name" autoComplete="name" value={guestName} onChange={(event) => { setGuestName(event.target.value); setFields((current) => ({ ...current, guestName: "" })); setMessage("") }} disabled={submitting || unknown} required aria-invalid={Boolean(fields.guestName)} aria-describedby="guest-name-hint guest-name-error" />
+        <p id="guest-name-hint" className="field-hint">От 1 до 100 символов без пробелов по краям.</p>
+        <p id="guest-name-error" className="field-error">{fields.guestName}</p>
+      </div>
+      <div className="form-field">
+        <label htmlFor="guest-email">Email</label>
+        <input id="guest-email" type="email" autoComplete="email" value={guestEmail} onChange={(event) => { setGuestEmail(event.target.value); setFields((current) => ({ ...current, guestEmail: "" })); setMessage("") }} disabled={submitting || unknown} required aria-invalid={Boolean(fields.guestEmail)} aria-describedby="guest-email-hint guest-email-error" />
+        <p id="guest-email-hint" className="field-hint">До 254 символов. Подтверждение письмом не требуется.</p>
+        <p id="guest-email-error" className="field-error">{fields.guestEmail}</p>
+      </div>
+      {fields.start && <p role="alert" className="field-error">{fields.start} Обновите слоты и выберите время заново.</p>}
+      {fields.body && <p role="alert" className="field-error">{fields.body}</p>}
+      <p className="field-hint">Имя и email увидит владелец календаря. Управление доступно без авторизации.</p>
+      <div className="form-actions"><Button type="submit" disabled={submitting || unknown}>{submitting ? "Подтверждаем…" : "Подтвердить запись"}</Button></div>
+    </form>}
   </section>
 }

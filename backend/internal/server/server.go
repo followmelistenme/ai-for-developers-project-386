@@ -4,6 +4,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/followmelistenme/ai-for-developers-project-386/backend/internal/api"
 	"github.com/followmelistenme/ai-for-developers-project-386/backend/internal/availability"
+	"github.com/followmelistenme/ai-for-developers-project-386/backend/internal/meeting"
 	"github.com/followmelistenme/ai-for-developers-project-386/backend/internal/meetingtype"
 	"github.com/followmelistenme/ai-for-developers-project-386/backend/internal/memory"
 )
@@ -126,25 +128,59 @@ func (h *handler) GetPublishedMeetingType(_ context.Context, request api.GetPubl
 
 func (h *handler) ListAvailableSlots(_ context.Context, request api.ListAvailableSlotsRequestObject) (api.ListAvailableSlotsResponseObject, error) {
 	now := h.now()
-	item, ok := h.calendar.PublishedMeetingType(request.MeetingTypeId)
-	if !ok {
-		return api.ListAvailableSlots404JSONResponse{MeetingTypeNotFoundJSONResponse: api.MeetingTypeNotFoundJSONResponse{Message: "Тип встречи недоступен"}}, nil
-	}
 	date := ""
 	if request.Params.Date != nil {
 		date = request.Params.Date.String()
 	}
-	result, err := availability.ForDate(now, h.location, date, item.DurationMinutes)
+	result, err := h.calendar.Available(request.MeetingTypeId, now, h.location, date)
+	if errors.Is(err, memory.ErrTypeUnavailable) {
+		return api.ListAvailableSlots404JSONResponse{MeetingTypeNotFoundJSONResponse: api.MeetingTypeNotFoundJSONResponse{Message: "Тип встречи недоступен"}}, nil
+	}
 	if err != nil {
 		return api.ListAvailableSlots400JSONResponse{Message: "Выберите дату в текущем окне записи", Fields: map[string]string{"date": "Дата вне окна записи"}}, nil
 	}
+	return api.ListAvailableSlots200JSONResponse(availabilityDTO(now, result)), nil
+}
+
+func availabilityDTO(now time.Time, result availability.Day) api.AvailableSlots {
 	slots := make([]api.AvailableSlot, 0, len(result.Slots))
 	for _, slot := range result.Slots {
 		slots = append(slots, api.AvailableSlot{Start: slot.Start, End: slot.End})
 	}
-	return api.ListAvailableSlots200JSONResponse{
+	return api.AvailableSlots{
 		ServerTime: now, NextWindowUpdate: result.WindowStart, TimeZone: api.EuropeMoscow,
 		WindowStart: openapi_types.Date{Time: result.WindowStart}, WindowEnd: openapi_types.Date{Time: result.WindowEnd},
 		SelectedDate: openapi_types.Date{Time: result.SelectedDate}, Slots: slots,
-	}, nil
+	}
+}
+
+func meetingDTO(item meeting.Meeting) api.Meeting {
+	return api.Meeting{Id: item.ID, MeetingType: toDTO(item.Type), Date: openapi_types.Date{Time: item.Start}, Start: item.Start, End: item.End, GuestName: item.GuestName, GuestEmail: item.GuestEmail, CallUrl: "http://localhost/event/" + item.ID}
+}
+
+func (h *handler) ConfirmMeeting(_ context.Context, request api.ConfirmMeetingRequestObject) (api.ConfirmMeetingResponseObject, error) {
+	input := request.Body
+	if fields := meeting.ValidateContacts(input.GuestName, input.GuestEmail); len(fields) != 0 {
+		return api.ConfirmMeeting400JSONResponse{Message: "Проверьте данные гостя", Fields: fields}, nil
+	}
+	now := h.now()
+	item, day, err := h.calendar.Confirm(request.MeetingTypeId, now, h.location, input.Start, input.GuestName, input.GuestEmail)
+	if errors.Is(err, memory.ErrBookingConflict) {
+		return api.ConfirmMeeting409JSONResponse{Message: "Этот интервал уже занят. Выберите другое время", Availability: availabilityDTO(now, day)}, nil
+	}
+	if errors.Is(err, memory.ErrInvalidStart) {
+		return api.ConfirmMeeting400JSONResponse{Message: "Выберите доступное время в текущем окне записи", Fields: map[string]string{"start": "Интервал не соответствует правилам записи"}}, nil
+	}
+	if err != nil {
+		return api.ConfirmMeeting404JSONResponse{MeetingTypeNotFoundJSONResponse: api.MeetingTypeNotFoundJSONResponse{Message: "Тип встречи недоступен"}}, nil
+	}
+	return api.ConfirmMeeting201JSONResponse(meetingDTO(item)), nil
+}
+
+func (h *handler) ListOwnerMeetings(context.Context, api.ListOwnerMeetingsRequestObject) (api.ListOwnerMeetingsResponseObject, error) {
+	result := api.ListOwnerMeetings200JSONResponse{}
+	for _, item := range h.calendar.Meetings(h.now()) {
+		result = append(result, meetingDTO(item))
+	}
+	return result, nil
 }

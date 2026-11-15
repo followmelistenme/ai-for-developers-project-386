@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { CalendarDays, Clock3, Plus } from "lucide-react"
+import { OwnerMeetings } from "@/OwnerMeetings"
 import { api } from "@/api/client"
 import type { components } from "@/api/generated/schema"
 import { Button } from "@/components/ui/button"
@@ -183,6 +184,7 @@ export function OwnerPage() {
           ))}
         </div>
       )}
+      <OwnerMeetings />
     </main>
   )
 }
