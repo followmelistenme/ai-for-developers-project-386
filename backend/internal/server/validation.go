@@ -62,7 +62,7 @@ func collectFieldErrors(err error, fields map[string]string) {
 	var e *openapi3.SchemaError
 	if errors.As(err, &e) {
 		path := e.JSONPointer()
-		if len(path) > 0 && (path[0] == "name" || path[0] == "description" || path[0] == "durationMinutes" || path[0] == "guestName" || path[0] == "guestEmail" || path[0] == "start") {
+		if len(path) > 0 && (path[0] == "name" || path[0] == "description" || path[0] == "durationMinutes" || path[0] == "guestName" || path[0] == "guestEmail" || path[0] == "start" || path[0] == "attemptId") {
 			fields[path[0]] = "Проверьте значение поля"
 		} else if e.SchemaField == "required" {
 			if value, ok := e.Value.(map[string]any); ok {

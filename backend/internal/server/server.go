@@ -160,11 +160,14 @@ func meetingDTO(item meeting.Meeting) api.Meeting {
 
 func (h *handler) ConfirmMeeting(_ context.Context, request api.ConfirmMeetingRequestObject) (api.ConfirmMeetingResponseObject, error) {
 	input := request.Body
-	if fields := meeting.ValidateContacts(input.GuestName, input.GuestEmail); len(fields) != 0 {
-		return api.ConfirmMeeting400JSONResponse{Message: "Проверьте данные гостя", Fields: fields}, nil
-	}
 	now := h.now()
-	item, day, err := h.calendar.Confirm(request.MeetingTypeId, now, h.location, input.Start, input.GuestName, input.GuestEmail)
+	item, day, err := h.calendar.Confirm(input.AttemptId.String(), request.MeetingTypeId, now, h.location, input.Start, input.GuestName, input.GuestEmail)
+	if errors.Is(err, memory.ErrAttemptMismatch) {
+		return api.ConfirmMeeting400JSONResponse{Message: "Данные попытки изменились. Начните новую попытку", Fields: map[string]string{"attemptId": "Для новых данных нужна новая попытка"}}, nil
+	}
+	if errors.Is(err, memory.ErrInvalidContacts) {
+		return api.ConfirmMeeting400JSONResponse{Message: "Проверьте данные гостя", Fields: meeting.ValidateContacts(input.GuestName, input.GuestEmail)}, nil
+	}
 	if errors.Is(err, memory.ErrBookingConflict) {
 		return api.ConfirmMeeting409JSONResponse{Message: "Этот интервал уже занят. Выберите другое время", Availability: availabilityDTO(now, day)}, nil
 	}

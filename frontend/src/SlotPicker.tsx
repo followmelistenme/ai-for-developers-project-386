@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 
 type Availability = components["schemas"]["AvailableSlots"]
 type Slot = components["schemas"]["AvailableSlot"]
+type Attempt = { meetingTypeId: string, body: components["schemas"]["ConfirmMeeting"] }
 type View = { data?: Availability, loading: boolean, failed: boolean, missing: boolean, deadline?: number }
 
 function timeLabel(instant: string, timeZone: string) {
@@ -31,6 +32,8 @@ export function SlotPicker({ meetingTypeId }: { meetingTypeId: string }) {
   const [fields, setFields] = useState<Record<string, string>>({})
   // A pending request can already have saved the meeting. Refresh never changes its state.
   const locked = useRef(false)
+  const inFlight = useRef(false)
+  const attempt = useRef<Attempt | null>(null)
   const refresh = useCallback(() => {
     if (locked.current) return
     setSelected(null)
@@ -81,14 +84,26 @@ export function SlotPicker({ meetingTypeId }: { meetingTypeId: string }) {
     return () => window.clearTimeout(timer)
   }, [view.deadline, view.loading, view.failed, refresh])
 
-  async function confirm() {
-    if (!selected || locked.current) return
+  async function confirm(retry = false) {
+    if (inFlight.current || (!retry && locked.current)) return
+    if (!retry) {
+      if (!selected) return
+      attempt.current = { meetingTypeId, body: { attemptId: crypto.randomUUID(), start: selected.start, guestName, guestEmail } }
+    }
+    const pending = attempt.current
+    if (!pending) return
+    inFlight.current = true
     locked.current = true
+    function allowNewAttempt() {
+      attempt.current = null
+      locked.current = false
+      setUnknown(false)
+    }
     setSubmitting(true)
     setMessage("")
     setFields({})
     try {
-      const result = await api.POST("/api/meeting-types/{meetingTypeId}/meetings", { params: { path: { meetingTypeId } }, body: { start: selected.start, guestName, guestEmail } })
+      const result = await api.POST("/api/meeting-types/{meetingTypeId}/meetings", { params: { path: { meetingTypeId: pending.meetingTypeId } }, body: pending.body })
       if (result.response.status === 201 && result.data) {
         setConfirmed(result.data)
       } else if (result.response.status === 409 && result.error && "availability" in result.error) {
@@ -96,21 +111,22 @@ export function SlotPicker({ meetingTypeId }: { meetingTypeId: string }) {
         setView({ data, loading: false, failed: false, missing: false, deadline: performance.now() + Date.parse(data.nextWindowUpdate) - Date.parse(data.serverTime) })
         setSelected(null)
         setMessage(result.error.message)
-        locked.current = false
+        allowNewAttempt()
       } else if (result.response.status === 400 && result.error && "fields" in result.error) {
         setMessage(result.error.message)
         setFields(result.error.fields)
-        locked.current = false
+        allowNewAttempt()
       } else if (result.response.status === 404) {
         setView((current) => ({ ...current, missing: true }))
         setSelected(null)
-        locked.current = false
+        allowNewAttempt()
       } else {
         setUnknown(true)
       }
     } catch {
       setUnknown(true)
     } finally {
+      inFlight.current = false
       setSubmitting(false)
     }
   }
@@ -137,7 +153,10 @@ export function SlotPicker({ meetingTypeId }: { meetingTypeId: string }) {
       <p className="field-hint">Окно записи: {dateLabel(data.windowStart)}–{dateLabel(data.windowEnd)}</p>
     </div>}
     {message && <p role="alert" className="booking-message">{message}</p>}
-    {unknown && <p role="alert" className="booking-message">Результат подтверждения неизвестен. Встреча могла быть создана. Не повторяйте отправку, пока не уточните результат.</p>}
+    {unknown && <div className="slot-state">
+      <p role="alert" className="booking-message">Результат подтверждения неизвестен. Встреча могла быть создана. Повторите подтверждение с теми же данными, чтобы узнать результат. До ответа изменить данные нельзя. При перезагрузке страницы данные этой попытки будут потеряны.</p>
+      <Button type="button" disabled={submitting} onClick={() => { void confirm(true) }}>Повторить подтверждение</Button>
+    </div>}
     {view.loading && <p role="status" className="owner-description">Загружаем свободные слоты…</p>}
     {view.failed && <div className="slot-state"><p role="alert">Не удалось загрузить свободные слоты. Проверьте соединение и попробуйте ещё раз.</p><Button variant="outline" onClick={refresh}>Попробовать ещё раз</Button></div>}
     {view.missing && <p role="alert">Тип встречи больше недоступен. Выберите другой тип в каталоге.</p>}
@@ -165,6 +184,7 @@ export function SlotPicker({ meetingTypeId }: { meetingTypeId: string }) {
       </div>
       {fields.start && <p role="alert" className="field-error">{fields.start} Обновите слоты и выберите время заново.</p>}
       {fields.body && <p role="alert" className="field-error">{fields.body}</p>}
+      {fields.attemptId && <p role="alert" className="field-error">{fields.attemptId}</p>}
       <p className="field-hint">Имя и email увидит владелец календаря. Управление доступно без авторизации.</p>
       <div className="form-actions"><Button type="submit" disabled={submitting || unknown}>{submitting ? "Подтверждаем…" : "Подтвердить запись"}</Button></div>
     </form>}

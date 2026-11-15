@@ -3,6 +3,7 @@ package server_test
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/google/uuid"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -44,7 +45,7 @@ func confirm(t *testing.T, h http.Handler, id, body string) *httptest.ResponseRe
 }
 
 func bookingBody(start string) string {
-	return fmt.Sprintf(`{"start":%q,"guestName":"  Анна  ","guestEmail":" anna@example.com "}`, start)
+	return fmt.Sprintf(`{"attemptId":%q,"start":%q,"guestName":"  Анна  ","guestEmail":" anna@example.com "}`, uuid.NewString(), start)
 }
 
 func ownerMeetings(t *testing.T, h http.Handler) []meetingResponse {
@@ -105,7 +106,11 @@ func TestConfirmationRejectsInvalidGuestAndForgedData(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h := calendarAt(t, "2026-11-15T12:00:00Z")
 			id := publishType(t, h, 30)
-			got := confirm(t, h, id, tc.body)
+			body := tc.body
+			if json.Valid([]byte(body)) {
+				body = strings.Replace(body, "{", `{"attemptId":"`+uuid.NewString()+`",`, 1)
+			}
+			got := confirm(t, h, id, body)
 			var problem struct {
 				Message string
 				Fields  map[string]string
@@ -129,7 +134,7 @@ func TestGuestContactBoundariesAreTrimmedAndPreserved(t *testing.T) {
 			h := calendarAt(t, "2026-11-15T12:00:00Z")
 			id := publishType(t, h, 15)
 			email := strings.Repeat("a", 64) + "@" + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 61)
-			got := confirm(t, h, id, fmt.Sprintf(`{"start":"2026-11-16T09:00:00+03:00","guestName":%q,"guestEmail":%q}`, "  "+name+"  ", "  "+email+"  "))
+			got := confirm(t, h, id, fmt.Sprintf(`{"attemptId":%q,"start":"2026-11-16T09:00:00+03:00","guestName":%q,"guestEmail":%q}`, uuid.NewString(), "  "+name+"  ", "  "+email+"  "))
 			if got.Code != http.StatusCreated {
 				t.Fatalf("valid boundaries rejected: %d %s", got.Code, got.Body.String())
 			}
@@ -388,5 +393,228 @@ func TestOwnerSeesChronologicalFutureAndOngoingMeetingsUntilTheirEnd(t *testing.
 	now = time.Date(2026, 11, 16, 8, 0, 0, 0, time.UTC)
 	if len(ownerMeetings(t, h)) != 0 {
 		t.Fatal("finished meeting retained")
+	}
+}
+
+func TestSuccessfulAttemptReplaysOriginalMeetingOnce(t *testing.T) {
+	h := calendarAt(t, "2026-11-15T12:00:00Z")
+	id := publishType(t, h, 30)
+	body := bookingBody("2026-11-16T09:00:00+03:00")
+	original := confirm(t, h, id, body)
+	replay := confirm(t, h, id, body)
+	if original.Code != 201 || replay.Code != 201 || replay.Body.String() != original.Body.String() {
+		t.Fatalf("replay differs: original %d %s; replay %d %s", original.Code, original.Body.String(), replay.Code, replay.Body.String())
+	}
+	if len(ownerMeetings(t, h)) != 1 {
+		t.Fatal("replay created another meeting")
+	}
+	if slots := readSlots(t, h, id, ""); slots.Slots[0].Start != "2026-11-16T09:30:00+03:00" {
+		t.Fatalf("occupied time offered: %+v", slots.Slots)
+	}
+	// A new process forgets accepted attempts and meetings together.
+	fresh := calendarAt(t, "2026-11-15T12:00:00Z")
+	if got := confirm(t, fresh, id, body); got.Code != 404 {
+		t.Fatalf("new process retained attempt: %d %s", got.Code, got.Body.String())
+	}
+	newType := publishType(t, fresh, 30)
+	if got := confirm(t, fresh, newType, body); got.Code != 201 || got.Body.String() == original.Body.String() {
+		t.Fatalf("new process could not use fresh attempt: %d %s", got.Code, got.Body.String())
+	}
+}
+
+func TestSavedAttemptRejectsChangedDataWithoutLeakingOriginal(t *testing.T) {
+	h := calendarAt(t, "2026-11-15T12:00:00Z")
+	id := publishType(t, h, 30)
+	other := publishType(t, h, 30)
+	body := bookingBody("2026-11-16T09:00:00+03:00")
+	original := confirm(t, h, id, body)
+	if original.Code != 201 {
+		t.Fatal(original.Body.String())
+	}
+	for _, tc := range []struct{ name, id, body string }{
+		{"email", id, strings.ReplaceAll(body, "anna@example.com", "boris@example.com")},
+		{"email case", id, strings.ReplaceAll(body, "anna@example.com", "Anna@example.com")},
+		{"name", id, strings.ReplaceAll(body, "Анна", "Борис")},
+		{"invalid name", id, strings.ReplaceAll(body, "Анна", "")},
+		{"start", id, strings.ReplaceAll(body, "09:00:00", "10:00:00")},
+		{"type", other, body},
+		{"unknown type", "missing", body},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := confirm(t, h, tc.id, tc.body)
+			var problem struct{ Fields map[string]string }
+			if err := json.Unmarshal(got.Body.Bytes(), &problem); err != nil {
+				t.Fatal(err)
+			}
+			if got.Code != 400 || problem.Fields["attemptId"] == "" {
+				t.Fatalf("mismatch accepted or wrong field: %d %s", got.Code, got.Body.String())
+			}
+			for _, secret := range []string{"guestName", "guestEmail", "callUrl", "anna@example.com", "Анна", `"id"`} {
+				if strings.Contains(got.Body.String(), secret) {
+					t.Fatalf("mismatch leaked %s: %s", secret, got.Body.String())
+				}
+			}
+		})
+	}
+	if len(ownerMeetings(t, h)) != 1 {
+		t.Fatal("changed attempt saved")
+	}
+	replay := confirm(t, h, id, body)
+	if replay.Body.String() != original.Body.String() {
+		t.Fatal("original attempt changed")
+	}
+}
+
+func TestConfirmationRequiresUUIDAttemptID(t *testing.T) {
+	for _, value := range []string{`""`, `"not-a-uuid"`, `"00000000000000000000000000000000"`, `null`, `42`, "missing"} {
+		t.Run(value, func(t *testing.T) {
+			h := calendarAt(t, "2026-11-15T12:00:00Z")
+			id := publishType(t, h, 30)
+			body := `{"start":"2026-11-16T09:00:00+03:00","guestName":"Анна","guestEmail":"anna@example.com"}`
+			if value != "missing" {
+				body = strings.Replace(body, "{", `{"attemptId":`+value+`,`, 1)
+			}
+			got := confirm(t, h, id, body)
+			var problem struct{ Fields map[string]string }
+			if err := json.Unmarshal(got.Body.Bytes(), &problem); err != nil {
+				t.Fatal(err)
+			}
+			if got.Code != 400 || problem.Fields["attemptId"] == "" || len(ownerMeetings(t, h)) != 0 {
+				t.Fatalf("invalid attempt: %d %s", got.Code, got.Body.String())
+			}
+		})
+	}
+}
+
+func TestSuccessfulAttemptSurvivesMidnightMeetingEndAndWindowExpiry(t *testing.T) {
+	now := time.Date(2026, 11, 15, 20, 59, 59, 0, time.UTC)
+	h, err := server.NewWithClock(func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := publishType(t, h, 30)
+	body := bookingBody("2026-11-16T09:00:00+03:00")
+	original := confirm(t, h, id, body)
+	if original.Code != 201 {
+		t.Fatal(original.Body.String())
+	}
+	// A canonical replay trims contacts and compares instants, not RFC3339 strings.
+	canonical := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(body, "  Анна  ", "Анна"), " anna@example.com ", "anna@example.com"), "2026-11-16T09:00:00+03:00", "2026-11-16T06:00:00Z")
+	for _, instant := range []string{"2026-11-15T21:00:00Z", "2026-11-16T06:30:00Z", "2027-01-01T12:00:00Z"} {
+		now, err = time.Parse(time.RFC3339, instant)
+		if err != nil {
+			t.Fatal(err)
+		}
+		replay := confirm(t, h, id, canonical)
+		if replay.Code != 201 || replay.Body.String() != original.Body.String() {
+			t.Fatalf("lost attempt at %s: %d %s", instant, replay.Code, replay.Body.String())
+		}
+	}
+	if len(ownerMeetings(t, h)) != 0 {
+		t.Fatal("ended meeting remained in upcoming list")
+	}
+}
+
+func TestConcurrentAttemptsPreserveIdentityAndGuestPrivacy(t *testing.T) {
+	for _, sameGuest := range []bool{true, false} {
+		t.Run(fmt.Sprint(sameGuest), func(t *testing.T) {
+			h := calendarAt(t, "2026-11-15T12:00:00Z")
+			id := publishType(t, h, 30)
+			body := bookingBody("2026-11-16T09:00:00+03:00")
+			const count = 24
+			start := make(chan struct{})
+			results := make(chan struct {
+				body     string
+				response *httptest.ResponseRecorder
+			}, count)
+			var workers sync.WaitGroup
+			for i := range count {
+				workers.Go(func() {
+					payload := body
+					if !sameGuest {
+						payload = strings.ReplaceAll(payload, "anna@example.com", fmt.Sprintf("guest%d@example.com", i))
+					}
+					<-start
+					results <- struct {
+						body     string
+						response *httptest.ResponseRecorder
+					}{payload, confirm(t, h, id, payload)}
+				})
+			}
+			close(start)
+			workers.Wait()
+			close(results)
+			identity := ""
+			successes := 0
+			for result := range results {
+				got := result.response
+				if got.Code == 201 {
+					var m meetingResponse
+					if err := json.Unmarshal(got.Body.Bytes(), &m); err != nil {
+						t.Fatal(err)
+					}
+					if !strings.Contains(result.body, m.GuestEmail) {
+						t.Fatal("another guest received confirmation")
+					}
+					if identity != "" && identity != m.ID {
+						t.Fatal("concurrent replay created different identities")
+					}
+					identity = m.ID
+					successes++
+				} else {
+					if got.Code != 400 || !strings.Contains(got.Body.String(), `"attemptId"`) || strings.Contains(got.Body.String(), "guestEmail") {
+						t.Fatalf("wrong mismatch: %d %s", got.Code, got.Body.String())
+					}
+				}
+			}
+			expected := 1
+			if sameGuest {
+				expected = count
+			}
+			if successes != expected || len(ownerMeetings(t, h)) != 1 {
+				t.Fatalf("successes %d, expected %d; meetings %+v", successes, expected, ownerMeetings(t, h))
+			}
+		})
+	}
+}
+
+func TestFailedAttemptDoesNotBindIdentifierOrCacheFailure(t *testing.T) {
+	for _, failure := range []string{"contacts", "start", "missing type", "conflict"} {
+		t.Run(failure, func(t *testing.T) {
+			h := calendarAt(t, "2026-11-15T12:00:00Z")
+			id := publishType(t, h, 30)
+			body := bookingBody("2026-11-16T10:00:00+03:00")
+			failedBody, failedID, expected := body, id, 400
+			switch failure {
+			case "contacts":
+				failedBody = strings.ReplaceAll(body, "Анна", "")
+			case "start":
+				failedBody = strings.ReplaceAll(body, "10:00:00", "08:00:00")
+			case "missing type":
+				failedID = "missing"
+				expected = 404
+			case "conflict":
+				occupied := confirm(t, h, id, bookingBody("2026-11-16T09:00:00+03:00"))
+				if occupied.Code != 201 {
+					t.Fatal(occupied.Body.String())
+				}
+				failedBody = strings.ReplaceAll(body, "10:00:00", "09:00:00")
+				expected = 409
+			}
+			failed := confirm(t, h, failedID, failedBody)
+			if failed.Code != expected {
+				t.Fatalf("expected definite failure %d: %d %s", expected, failed.Code, failed.Body.String())
+			}
+			corrected := confirm(t, h, id, body)
+			if corrected.Code != 201 {
+				t.Fatalf("failure bound identifier: %d %s", corrected.Code, corrected.Body.String())
+			}
+			// New independent attempts still conflict without disclosure.
+			contender := strings.ReplaceAll(bookingBody("2026-11-16T10:00:00+03:00"), "anna@example.com", "boris@example.com")
+			conflict := confirm(t, h, id, contender)
+			if conflict.Code != 409 || strings.Contains(conflict.Body.String(), "anna@example.com") || !strings.Contains(conflict.Body.String(), `"availability"`) {
+				t.Fatalf("contender: %d %s", conflict.Code, conflict.Body.String())
+			}
+		})
 	}
 }

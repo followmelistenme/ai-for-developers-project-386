@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,6 +19,7 @@ type Calendar struct {
 	mu       sync.RWMutex
 	types    []meetingtype.MeetingType
 	meetings []meeting.Meeting
+	attempts map[string]meeting.Meeting
 }
 
 // AddDraft assigns a new identifier and saves a validated draft.
@@ -84,10 +86,25 @@ var ErrInvalidStart = errors.New("invalid meeting start")
 // ErrBookingConflict means another meeting already occupies the interval.
 var ErrBookingConflict = errors.New("meeting interval occupied")
 
+// ErrAttemptMismatch prevents returning a saved confirmation to a different request.
+var ErrAttemptMismatch = errors.New("attempt data differs")
+
+// ErrInvalidContacts means guest details violate booking rules.
+var ErrInvalidContacts = errors.New("invalid guest contacts")
+
 // Confirm saves a meeting in the calendar shared by all meeting types.
-func (c *Calendar) Confirm(id string, now time.Time, location *time.Location, start time.Time, name, email string) (meeting.Meeting, availability.Day, error) {
+func (c *Calendar) Confirm(attemptID, id string, now time.Time, location *time.Location, start time.Time, name, email string) (meeting.Meeting, availability.Day, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if saved, ok := c.attempts[attemptID]; ok {
+		if saved.Type.ID != id || !saved.Start.Equal(start) || saved.GuestName != strings.TrimSpace(name) || saved.GuestEmail != strings.TrimSpace(email) {
+			return meeting.Meeting{}, availability.Day{}, ErrAttemptMismatch
+		}
+		return saved, availability.Day{}, nil
+	}
+	if len(meeting.ValidateContacts(name, email)) != 0 {
+		return meeting.Meeting{}, availability.Day{}, ErrInvalidContacts
+	}
 	for _, item := range c.types {
 		if item.ID == id && item.Status == meetingtype.Published {
 			start = start.In(location)
@@ -101,6 +118,10 @@ func (c *Calendar) Confirm(id string, now time.Time, location *time.Location, st
 			}
 			result.ID = rand.Text()
 			c.meetings = append(c.meetings, result)
+			if c.attempts == nil {
+				c.attempts = make(map[string]meeting.Meeting)
+			}
+			c.attempts[attemptID] = result
 			return result, availability.Day{}, nil
 		}
 	}

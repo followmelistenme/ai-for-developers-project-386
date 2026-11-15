@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { expect, test } from "./fixtures"
 
 test("гость записывается с главной, сохраняет подтверждение, владелец видит встречу всех типов", async ({ page, request, context }) => {
@@ -57,12 +58,17 @@ test("конфликт обновляет выбранную дату, сохр�
   const other = await (await request.post("/api/owner/meeting-types", { data: { name: "Другой формат", durationMinutes: 15 } })).json() as { id: string }
   for (const item of [type, other]) await request.post(`/api/owner/meeting-types/${item.id}/publish`)
   const available = await (await request.get(`/api/meeting-types/${type.id}/slots`)).json() as { windowEnd: string }
+  const attempts: string[] = []
+  await page.route("**/meetings", async (route) => {
+    attempts.push((route.request().postDataJSON() as { attemptId: string }).attemptId)
+    await route.fallback()
+  })
   await page.goto(`/booking/${type.id}`)
   await page.getByLabel("Дата встречи по Москве").fill(available.windowEnd)
   await page.getByRole("button", { name: "09:00–10:00", exact: true }).click()
   await page.getByLabel("Ваше имя", { exact: true }).fill("Вера")
   await page.getByLabel("Email", { exact: true }).fill("vera@example.com")
-  const winner = await request.post(`/api/meeting-types/${other.id}/meetings`, { data: { start: `${available.windowEnd}T09:30:00+03:00`, guestName: "Другой гость", guestEmail: "other@example.com" } })
+  const winner = await request.post(`/api/meeting-types/${other.id}/meetings`, { data: { attemptId: randomUUID(), start: `${available.windowEnd}T09:30:00+03:00`, guestName: "Другой гость", guestEmail: "other@example.com" } })
   expect(winner.status()).toBe(201)
   await page.getByRole("button", { name: "Подтвердить запись", exact: true }).click()
   await expect(page.getByRole("alert")).toContainText("Этот интервал уже занят")
@@ -77,6 +83,8 @@ test("конфликт обновляет выбранную дату, сохр�
   await expect(page.getByRole("heading", { name: "Вы записаны на звонок" })).toBeVisible()
   const meetings = await (await request.get("/api/owner/meetings")).json() as unknown[]
   expect(meetings).toHaveLength(2)
+  expect(attempts).toHaveLength(2)
+  expect(attempts[1]).not.toBe(attempts[0])
 })
 
 test("контакты переживают обновление слотов, а ожидающая отправка и успех защищены от фокуса и полуночи", async ({ page, request, apiURL }) => {
@@ -105,7 +113,7 @@ test("контакты переживают обновление слотов, �
     await route.fulfill({ response })
   })
   try {
-    await page.getByRole("button", { name: "Подтвердить запись", exact: true }).click()
+    await page.evaluate("const form = document.querySelector('form'); form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))")
     await pending
     await page.evaluate("window.dispatchEvent(new Event('focus')); document.dispatchEvent(new Event('visibilitychange'))")
     await page.clock.fastForward(1200)
@@ -122,25 +130,44 @@ test("контакты переживают обновление слотов, �
   } finally { release() }
 })
 
-test("неполученный ответ сообщает неизвестный результат без повторной отправки", async ({ page, request, apiURL }) => {
+test("потерянный ответ восстанавливает исходную встречу неизменной попыткой", async ({ page, request, apiURL }) => {
   const type = await (await request.post("/api/owner/meeting-types", { data: { name: "Потерянный ответ", durationMinutes: 30 } })).json() as { id: string }
   await request.post(`/api/owner/meeting-types/${type.id}/publish`)
   await page.goto(`/booking/${type.id}`)
   await page.getByRole("button", { name: "09:00–09:30", exact: true }).click()
   await page.getByLabel("Ваше имя", { exact: true }).fill("Ева")
   await page.getByLabel("Email", { exact: true }).fill("eva@example.com")
-  await page.route("**/meetings", async (route) => { await route.fetch({ url: `${apiURL}${new URL(route.request().url()).pathname}` }); await route.abort() }, { times: 1 })
+  const bodies: string[] = []
+  await page.route("**/meetings", async (route) => {
+    bodies.push(route.request().postData() ?? "")
+    const response = await route.fetch({ url: `${apiURL}${new URL(route.request().url()).pathname}` })
+    if (bodies.length === 1) await route.abort()
+    else await route.fulfill({ response })
+  })
   await page.getByRole("button", { name: "Подтвердить запись", exact: true }).click()
   await expect(page.getByRole("alert")).toContainText("Результат подтверждения неизвестен. Встреча могла быть создана")
   await page.evaluate("window.dispatchEvent(new Event('focus'))")
   await expect(page.getByRole("button", { name: "Подтвердить запись", exact: true })).toBeDisabled()
-  const meetings = await (await request.get("/api/owner/meetings")).json() as unknown[]
+  const meetings = await (await request.get("/api/owner/meetings")).json() as { id: string, callUrl: string }[]
   expect(meetings).toHaveLength(1)
+  await page.getByRole("button", { name: "Повторить подтверждение", exact: true }).click()
+  await expect(page.getByRole("heading", { name: "Вы записаны на звонок" })).toBeVisible()
+  await expect(page.getByLabel("Ссылка для звонка", { exact: true })).toHaveValue(meetings[0].callUrl)
+  expect(bodies).toHaveLength(2)
+  expect(bodies[1]).toBe(bodies[0])
+  expect(await (await request.get("/api/owner/meetings")).json()).toEqual(meetings)
 })
 
 test("проверка контактов и подтверждение доступны на компьютере и телефоне без переполнения", async ({ page, request }) => {
   const type = await (await request.post("/api/owner/meeting-types", { data: { name: "Обсудим вашу следующую идею", durationMinutes: 45 } })).json() as { id: string }
   await request.post(`/api/owner/meeting-types/${type.id}/publish`)
+  const attempts: string[] = []
+  await page.route("**/meetings", async (route) => {
+    if (route.request().method() !== "POST") { await route.fallback(); return }
+    const body = route.request().postDataJSON() as { attemptId: string }
+    attempts.push(body.attemptId)
+    await route.fallback()
+  })
   for (const width of [1280, 390, 320]) {
     await page.setViewportSize({ width, height: 900 })
     await page.goto(`/booking/${type.id}`)
@@ -163,6 +190,7 @@ test("проверка контактов и подтверждение дост
     await expect(page.getByRole("heading", { name: "Вы записаны на звонок" })).toBeVisible()
     expect(await page.evaluate("document.documentElement.scrollWidth > window.innerWidth")).toBe(false)
     await page.screenshot({ path: `/private/tmp/booking04-confirmation-${width}.png`, fullPage: true })
+    expect(attempts.at(-1)).not.toBe(attempts.at(-2))
     await page.goto("/owner")
     const list = page.getByRole("region", { name: "Предстоящие встречи" })
     await expect(list.getByRole("article")).toHaveCount(width === 1280 ? 1 : width === 390 ? 2 : 3)
@@ -179,7 +207,7 @@ test("список владельца обновляется при возвра
   const list = page.getByRole("region", { name: "Предстоящие встречи" })
   await expect(list).toContainText("Пока нет предстоящих встреч")
   const book = async (start: string, guestName: string) => {
-    const result = await request.post(`/api/meeting-types/${type.id}/meetings`, { data: { start, guestName, guestEmail: "guest@example.com" } })
+    const result = await request.post(`/api/meeting-types/${type.id}/meetings`, { data: { attemptId: randomUUID(), start, guestName, guestEmail: "guest@example.com" } })
     expect(result.status()).toBe(201)
   }
   await book(slots.slots[0].start, "Первый гость")
@@ -188,4 +216,140 @@ test("список владельца обновляется при возвра
   await book(slots.slots[1].start, "Второй гость")
   await page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
   await expect(list.getByRole("article")).toHaveCount(2)
+})
+
+test("повтор до доставки и повторный отказ сети сохраняют неизменную попытку, контакты и блокировку", async ({ page, request }) => {
+  const type = await (await request.post("/api/owner/meeting-types", { data: { name: "Безопасный повтор", durationMinutes: 30 } })).json() as { id: string }
+  await request.post(`/api/owner/meeting-types/${type.id}/publish`)
+  const available = await (await request.get(`/api/meeting-types/${type.id}/slots`)).json() as Record<string, unknown>
+  await page.clock.install()
+  await page.route("**/slots*", (route) => route.fulfill({ json: { ...available, serverTime: "2026-11-15T23:59:59+03:00", nextWindowUpdate: "2026-11-16T00:00:00+03:00" } }))
+  await page.goto(`/booking/${type.id}`)
+  await page.getByRole("button", { name: "09:00–09:30", exact: true }).click()
+  await page.getByLabel("Ваше имя", { exact: true }).fill("Ирина")
+  await page.getByLabel("Email", { exact: true }).fill("irina@example.com")
+  const bodies: string[] = []
+  await page.route("**/meetings", async (route) => {
+    bodies.push(route.request().postData() ?? "")
+    if (bodies.length <= 2) await route.abort()
+    else await route.fallback()
+  })
+  await page.getByRole("button", { name: "Подтвердить запись", exact: true }).click()
+  await expect(page.getByRole("alert")).toContainText("Встреча могла быть создана")
+  await page.getByRole("button", { name: "Повторить подтверждение", exact: true }).click()
+  await expect(page.getByRole("button", { name: "Повторить подтверждение", exact: true })).toBeEnabled()
+  await expect(page.getByRole("alert")).toContainText("Результат подтверждения неизвестен")
+  expect(bodies).toHaveLength(2)
+  expect(await (await request.get("/api/owner/meetings")).json()).toEqual([])
+  await page.evaluate("window.dispatchEvent(new Event('focus')); document.dispatchEvent(new Event('visibilitychange'))")
+  await page.clock.fastForward(1200)
+  await expect(page.getByLabel("Ваше имя", { exact: true })).toBeDisabled()
+  await expect(page.getByLabel("Email", { exact: true })).toHaveValue("irina@example.com")
+  await expect(page.getByLabel("Email", { exact: true })).toBeDisabled()
+  await expect(page.getByLabel("Дата встречи по Москве")).toBeDisabled()
+  await expect(page.getByRole("button", { name: "Обновить слоты" })).toBeDisabled()
+  await expect(page.getByRole("button", { name: "09:30–10:00", exact: true })).toBeDisabled()
+  for (const width of [1280, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 })
+    expect(await page.evaluate("document.documentElement.scrollWidth > window.innerWidth")).toBe(false)
+    await page.screenshot({ path: `/private/tmp/booking05-unknown-${width}.png`, fullPage: true })
+  }
+  await page.getByRole("button", { name: "Повторить подтверждение", exact: true }).click()
+  await expect(page.getByRole("heading", { name: "Вы записаны на звонок" })).toBeVisible()
+  expect(bodies).toHaveLength(3)
+  expect(new Set(bodies).size).toBe(1)
+  const meetings = await (await request.get("/api/owner/meetings")).json() as { guestEmail: string }[]
+  expect(meetings).toHaveLength(1)
+  expect(meetings[0].guestEmail).toBe("irina@example.com")
+})
+
+test("две вкладки создают независимые попытки: один гость получает свою встречу, другой только конфликт", async ({ page, request, context, apiURL }) => {
+  const type = await (await request.post("/api/owner/meeting-types", { data: { name: "Две вкладки", durationMinutes: 30 } })).json() as { id: string }
+  await request.post(`/api/owner/meeting-types/${type.id}/publish`)
+  const second = await context.newPage()
+  await second.route("**/api/**", async (route) => {
+    const url = new URL(route.request().url())
+    const response = await route.fetch({ url: `${apiURL}${url.pathname}${url.search}` })
+    await route.fulfill({ response })
+  })
+  const pages = [page, second]
+  const emails = ["first@example.com", "second@example.com"]
+  const attempts: string[] = []
+  let release: () => void = () => undefined
+  const bothReady = new Promise<void>((resolve) => { release = resolve })
+  try {
+    for (const [index, tab] of pages.entries()) {
+      await tab.goto(`/booking/${type.id}`)
+      await tab.getByRole("button", { name: "09:00–09:30", exact: true }).click()
+      await tab.getByLabel("Ваше имя", { exact: true }).fill(index === 0 ? "Анна" : "Борис")
+      await tab.getByLabel("Email", { exact: true }).fill(emails[index])
+      await tab.route("**/meetings", async (route) => {
+        attempts.push((route.request().postDataJSON() as { attemptId: string }).attemptId)
+        if (attempts.length === 2) release()
+        await bothReady
+        await route.fallback()
+      })
+    }
+    await Promise.all(pages.map((tab) => tab.evaluate("document.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))")))
+    await expect.poll(async () => {
+      const counts = await Promise.all(pages.map((tab) => tab.getByRole("heading", { name: "Вы записаны на звонок" }).count()))
+      return counts.reduce((sum, count) => sum + count, 0)
+    }).toBe(1)
+    const meetings = await (await request.get("/api/owner/meetings")).json() as { guestEmail: string }[]
+    expect(meetings).toHaveLength(1)
+    expect(attempts).toHaveLength(2)
+    expect(attempts[1]).not.toBe(attempts[0])
+    const winner = emails.indexOf(meetings[0].guestEmail)
+    expect(winner).toBeGreaterThanOrEqual(0)
+    await expect(pages[winner].getByRole("region", { name: "Вы записаны на звонок" })).toContainText(emails[winner])
+    const loser = pages[1 - winner]
+    await expect(loser.getByRole("alert")).toContainText("Этот интервал уже занят")
+    await expect(loser.getByText(emails[winner], { exact: true })).toHaveCount(0)
+    await expect(loser.getByLabel("Ссылка для звонка", { exact: true })).toHaveCount(0)
+    await expect(loser.getByRole("button", { name: "09:00–09:30", exact: true })).toHaveCount(0)
+    await loser.getByRole("button", { name: "09:30–10:00", exact: true }).click()
+    await expect(loser.getByLabel("Email", { exact: true })).toHaveValue(emails[1 - winner])
+  } finally {
+    release()
+    await second.close()
+  }
+})
+
+test("перезагрузка сбрасывает неизвестную попытку и контакты, сохраняя занятость встречи на сервере", async ({ page, request, apiURL }) => {
+  const type = await (await request.post("/api/owner/meeting-types", { data: { name: "После перезагрузки", durationMinutes: 30 } })).json() as { id: string }
+  await request.post(`/api/owner/meeting-types/${type.id}/publish`)
+  const attempts: string[] = []
+  await page.route("**/meetings", async (route) => {
+    attempts.push((route.request().postDataJSON() as { attemptId: string }).attemptId)
+    const response = await route.fetch({ url: `${apiURL}${new URL(route.request().url()).pathname}` })
+    if (attempts.length === 1) await route.abort()
+    else await route.fulfill({ response })
+  })
+  await page.goto(`/booking/${type.id}`)
+  await page.getByRole("button", { name: "09:00–09:30", exact: true }).click()
+  await page.getByLabel("Ваше имя", { exact: true }).fill("Анна")
+  await page.getByLabel("Email", { exact: true }).fill("anna@example.com")
+  await page.getByRole("button", { name: "Подтвердить запись", exact: true }).click()
+  await expect(page.getByRole("button", { name: "Повторить подтверждение", exact: true })).toBeVisible()
+  await page.reload()
+  await expect(page.getByRole("button", { name: "09:30–10:00", exact: true })).toBeVisible()
+  await expect(page.getByRole("button", { name: "09:00–09:30", exact: true })).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Повторить подтверждение", exact: true })).toHaveCount(0)
+  await expect(page.getByRole("form", { name: "Подтвердите запись" })).toHaveCount(0)
+  await page.getByRole("button", { name: "09:30–10:00", exact: true }).click()
+  await expect(page.getByLabel("Ваше имя", { exact: true })).toHaveValue("")
+  await expect(page.getByLabel("Email", { exact: true })).toHaveValue("")
+  expect(await page.evaluate(() => ({ local: localStorage.length, session: sessionStorage.length }))).toEqual({ local: 0, session: 0 })
+  await page.getByLabel("Ваше имя", { exact: true }).fill("Борис")
+  await page.getByLabel("Email", { exact: true }).fill("boris@example.com")
+  await page.getByRole("button", { name: "Подтвердить запись", exact: true }).click()
+  await expect(page.getByRole("heading", { name: "Вы записаны на звонок" })).toBeVisible()
+  expect(attempts).toHaveLength(2)
+  expect(attempts[1]).not.toBe(attempts[0])
+  expect(await (await request.get("/api/owner/meetings")).json()).toHaveLength(2)
+  await page.reload()
+  await expect(page.getByRole("heading", { name: "Вы записаны на звонок" })).toHaveCount(0)
+  await page.getByRole("button", { name: "10:00–10:30", exact: true }).click()
+  await expect(page.getByLabel("Ваше имя", { exact: true })).toHaveValue("")
+  await expect(page.getByLabel("Email", { exact: true })).toHaveValue("")
 })
