@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { ArrowLeft, ArrowUpRight, CalendarDays, Clock3 } from "lucide-react"
+import { SlotPicker } from "@/SlotPicker"
 import { api } from "@/api/client"
 import type { components } from "@/api/generated/schema"
 import { Button } from "@/components/ui/button"
@@ -67,8 +68,8 @@ export function BookingPage() {
       {!loading && !failed && !missing && detail && <section className="owner-panel guest-detail">
         <p className="draft-duration"><Clock3 aria-hidden="true" /> {detail.durationMinutes} минут</p>
         {detail.description && <p className="draft-description">{detail.description}</p>}
-        <p className="field-hint">Выбор времени и запись на звонок пока недоступны.</p>
       </section>}
+      {!loading && !failed && !missing && detail && <SlotPicker key={detail.id} meetingTypeId={detail.id} />}
       {!loading && !failed && id === undefined && types.length > 0 && <div className="guest-types">
         {types.map((type) => <article key={type.id} className="owner-panel" aria-labelledby={`guest-type-${type.id}`}>
           <span className="guest-type-icon"><CalendarDays aria-hidden="true" /></span>

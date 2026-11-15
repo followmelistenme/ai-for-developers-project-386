@@ -14,12 +14,29 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/binding"
 	"github.com/oapi-codegen/runtime"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
+
+// Defines values for AvailableSlotsTimeZone.
+const (
+	EuropeMoscow AvailableSlotsTimeZone = "Europe/Moscow"
+)
+
+// Valid indicates whether the value is a known member of the AvailableSlotsTimeZone enum.
+func (e AvailableSlotsTimeZone) Valid() bool {
+	switch e {
+	case EuropeMoscow:
+		return true
+	default:
+		return false
+	}
+}
 
 // Defines values for CreateMeetingTypeDurationMinutes.
 const (
@@ -87,6 +104,42 @@ func (e MeetingTypeStatus) Valid() bool {
 	}
 }
 
+// AvailableSlot Свободный интервал; выбор не создаёт встречу.
+type AvailableSlot struct {
+	// End Окончание исключительно, RFC 3339.
+	End time.Time `json:"end"`
+
+	// Start Начало включительно, RFC 3339.
+	Start time.Time `json:"start"`
+}
+
+// AvailableSlots defines model for AvailableSlots.
+type AvailableSlots struct {
+	// NextWindowUpdate Точный момент следующего сдвига окна — ближайшая московская полночь.
+	NextWindowUpdate time.Time `json:"nextWindowUpdate"`
+
+	// SelectedDate Выбранная календарная дата по Москве.
+	SelectedDate openapi_types.Date `json:"selectedDate"`
+
+	// ServerTime Текущее время, захваченное один раз для этого ответа.
+	ServerTime time.Time `json:"serverTime"`
+
+	// Slots Интервалы в порядке начала; пустой список при отсутствии свободного времени.
+	Slots []AvailableSlot `json:"slots"`
+
+	// TimeZone Часовой пояс календаря; не зависит от окружения сервера или браузера.
+	TimeZone AvailableSlotsTimeZone `json:"timeZone"`
+
+	// WindowEnd Последний день окна включительно по Москве.
+	WindowEnd openapi_types.Date `json:"windowEnd"`
+
+	// WindowStart Первый день окна включительно по Москве.
+	WindowStart openapi_types.Date `json:"windowStart"`
+}
+
+// AvailableSlotsTimeZone Часовой пояс календаря; не зависит от окружения сервера или браузера.
+type AvailableSlotsTimeZone string
+
 // CreateMeetingType defines model for CreateMeetingType.
 type CreateMeetingType struct {
 	// Description Необязательное описание обычным текстом, до 500 символов Unicode. Разметка не интерпретируется.
@@ -137,7 +190,7 @@ type MeetingTypeNotFoundError struct {
 
 // ValidationError defines model for ValidationError.
 type ValidationError struct {
-	// Fields Сообщения по полям name, description, durationMinutes; body для ошибки всего запроса.
+	// Fields Сообщения по полям name, description, durationMinutes, date; body для ошибки всего запроса.
 	Fields map[string]string `json:"fields"`
 
 	// Message Общее сообщение об ошибке.
@@ -150,6 +203,12 @@ type MeetingTypeId = string
 // MeetingTypeNotFound defines model for MeetingTypeNotFound.
 type MeetingTypeNotFound = MeetingTypeNotFoundError
 
+// ListAvailableSlotsParams defines parameters for ListAvailableSlots.
+type ListAvailableSlotsParams struct {
+	// Date Календарная дата по Москве, YYYY-MM-DD. Без параметра выбирается первый день текущего окна.
+	Date *openapi_types.Date `form:"date,omitempty" json:"date,omitempty"`
+}
+
 // CreateOwnerMeetingTypeJSONRequestBody defines body for CreateOwnerMeetingType for application/json ContentType.
 type CreateOwnerMeetingTypeJSONRequestBody = CreateMeetingType
 
@@ -161,6 +220,9 @@ type ServerInterface interface {
 	// GetPublishedMeetingType Опубликованный тип встречи по отдельной ссылке
 	// (GET /api/meeting-types/{meetingTypeId})
 	GetPublishedMeetingType(c *gin.Context, meetingTypeId MeetingTypeId)
+	// ListAvailableSlots Свободные слоты опубликованного типа
+	// (GET /api/meeting-types/{meetingTypeId}/slots)
+	ListAvailableSlots(c *gin.Context, meetingTypeId MeetingTypeId, params ListAvailableSlotsParams)
 	// ListOwnerMeetingTypes Список типов встреч владельца
 	// (GET /api/owner/meeting-types)
 	ListOwnerMeetingTypes(c *gin.Context)
@@ -217,6 +279,42 @@ func (siw *ServerInterfaceWrapper) GetPublishedMeetingType(c *gin.Context) {
 	}
 
 	siw.Handler.GetPublishedMeetingType(c, meetingTypeId)
+}
+
+// ListAvailableSlots operation middleware
+func (siw *ServerInterfaceWrapper) ListAvailableSlots(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "meetingTypeId" -------------
+	var meetingTypeId MeetingTypeId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "meetingTypeId", c.Param("meetingTypeId"), &meetingTypeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter meetingTypeId: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListAvailableSlotsParams
+
+	// ------------- Optional query parameter "date" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "date", c.Request.URL.Query(), &params.Date, runtime.BindQueryParameterOptions{Type: "string", Format: "date"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter date: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.ListAvailableSlots(c, meetingTypeId, params)
 }
 
 // ListOwnerMeetingTypes operation middleware
@@ -302,6 +400,7 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.POST(options.BaseURL+"/api/owner/meeting-types/:meetingTypeId/publish", wrapper.PublishOwnerMeetingType)
 	router.GET(options.BaseURL+"/api/meeting-types", wrapper.ListPublishedMeetingTypes)
 	router.GET(options.BaseURL+"/api/meeting-types/:meetingTypeId", wrapper.GetPublishedMeetingType)
+	router.GET(options.BaseURL+"/api/meeting-types/:meetingTypeId/slots", wrapper.ListAvailableSlots)
 }
 
 type MeetingTypeNotFoundJSONResponse MeetingTypeNotFoundError
@@ -354,6 +453,59 @@ type GetPublishedMeetingType404JSONResponse struct {
 }
 
 func (response GetPublishedMeetingType404JSONResponse) VisitGetPublishedMeetingTypeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAvailableSlotsRequestObject struct {
+	MeetingTypeId MeetingTypeId `json:"meetingTypeId"`
+	Params        ListAvailableSlotsParams
+}
+
+type ListAvailableSlotsResponseObject interface {
+	VisitListAvailableSlotsResponse(w http.ResponseWriter) error
+}
+
+type ListAvailableSlots200JSONResponse AvailableSlots
+
+func (response ListAvailableSlots200JSONResponse) VisitListAvailableSlotsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAvailableSlots400JSONResponse ValidationError
+
+func (response ListAvailableSlots400JSONResponse) VisitListAvailableSlotsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAvailableSlots404JSONResponse struct {
+	MeetingTypeNotFoundJSONResponse
+}
+
+func (response ListAvailableSlots404JSONResponse) VisitListAvailableSlotsResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -468,6 +620,9 @@ type StrictServerInterface interface {
 	// GetPublishedMeetingType Опубликованный тип встречи по отдельной ссылке
 	// (GET /api/meeting-types/{meetingTypeId})
 	GetPublishedMeetingType(ctx context.Context, request GetPublishedMeetingTypeRequestObject) (GetPublishedMeetingTypeResponseObject, error)
+	// ListAvailableSlots Свободные слоты опубликованного типа
+	// (GET /api/meeting-types/{meetingTypeId}/slots)
+	ListAvailableSlots(ctx context.Context, request ListAvailableSlotsRequestObject) (ListAvailableSlotsResponseObject, error)
 	// ListOwnerMeetingTypes Список типов встреч владельца
 	// (GET /api/owner/meeting-types)
 	ListOwnerMeetingTypes(ctx context.Context, request ListOwnerMeetingTypesRequestObject) (ListOwnerMeetingTypesResponseObject, error)
@@ -586,6 +741,33 @@ func (sh *strictHandler) GetPublishedMeetingType(ctx *gin.Context, meetingTypeId
 	}
 }
 
+// ListAvailableSlots operation middleware
+func (sh *strictHandler) ListAvailableSlots(ctx *gin.Context, meetingTypeId MeetingTypeId, params ListAvailableSlotsParams) {
+	var request ListAvailableSlotsRequestObject
+
+	request.MeetingTypeId = meetingTypeId
+	request.Params = params
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.ListAvailableSlots(ctx, request.(ListAvailableSlotsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListAvailableSlots")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		sh.options.HandlerErrorFunc(ctx, err)
+	} else if validResponse, ok := response.(ListAvailableSlotsResponseObject); ok {
+		if err := validResponse.VisitListAvailableSlotsResponse(ctx.Writer); err != nil {
+			sh.options.ResponseErrorHandlerFunc(ctx, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(ctx, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // ListOwnerMeetingTypes operation middleware
 func (sh *strictHandler) ListOwnerMeetingTypes(ctx *gin.Context) {
 	var request ListOwnerMeetingTypesRequestObject
@@ -683,35 +865,48 @@ func (sh *strictHandler) PublishOwnerMeetingType(ctx *gin.Context, meetingTypeId
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"2MPp8rB0OYd1B1GZxH82EXS4Ynn1wUEQ/DoA",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

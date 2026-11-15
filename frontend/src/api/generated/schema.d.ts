@@ -94,10 +94,80 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/meeting-types/{meetingTypeId}/slots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Уникальный идентификатор типа встречи. */
+                meetingTypeId: components["parameters"]["MeetingTypeId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Свободные слоты опубликованного типа
+         * @description Окно по Europe/Moscow от завтра до сегодня + 14 дней включительно. Рабочие часы 09:00–18:00, шаг стартов 30 минут. Выбор не резервирует время.
+         */
+        get: operations["listAvailableSlots"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description Свободный интервал; выбор не создаёт встречу. */
+        AvailableSlot: {
+            /**
+             * Format: date-time
+             * @description Начало включительно, RFC 3339.
+             */
+            start: string;
+            /**
+             * Format: date-time
+             * @description Окончание исключительно, RFC 3339.
+             */
+            end: string;
+        };
+        AvailableSlots: {
+            /**
+             * Format: date-time
+             * @description Точный момент следующего сдвига окна — ближайшая московская полночь.
+             */
+            nextWindowUpdate: string;
+            /**
+             * Format: date-time
+             * @description Текущее время, захваченное один раз для этого ответа.
+             */
+            serverTime: string;
+            /**
+             * @description Часовой пояс календаря; не зависит от окружения сервера или браузера.
+             * @enum {string}
+             */
+            timeZone: "Europe/Moscow";
+            /**
+             * Format: date
+             * @description Первый день окна включительно по Москве.
+             */
+            windowStart: string;
+            /**
+             * Format: date
+             * @description Последний день окна включительно по Москве.
+             */
+            windowEnd: string;
+            /**
+             * Format: date
+             * @description Выбранная календарная дата по Москве.
+             */
+            selectedDate: string;
+            /** @description Интервалы в порядке начала; пустой список при отсутствии свободного времени. */
+            slots: components["schemas"]["AvailableSlot"][];
+        };
         MeetingTypeNotFoundError: {
             /** @description Сообщение о недоступном типе встречи. */
             message: string;
@@ -136,7 +206,7 @@ export interface components {
         ValidationError: {
             /** @description Общее сообщение об ошибке. */
             message: string;
-            /** @description Сообщения по полям name, description, durationMinutes; body для ошибки всего запроса. */
+            /** @description Сообщения по полям name, description, durationMinutes, date; body для ошибки всего запроса. */
             fields: {
                 [key: string]: string;
             };
@@ -279,6 +349,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MeetingType"];
+                };
+            };
+            404: components["responses"]["MeetingTypeNotFound"];
+        };
+    };
+    listAvailableSlots: {
+        parameters: {
+            query?: {
+                /** @description Календарная дата по Москве, YYYY-MM-DD. Без параметра выбирается первый день текущего окна. */
+                date?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Уникальный идентификатор типа встречи. */
+                meetingTypeId: components["parameters"]["MeetingTypeId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Актуальное окно записи и интервалы для выбранной даты */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AvailableSlots"];
+                };
+            };
+            /** @description Некорректная дата или дата вне текущего окна записи */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationError"];
                 };
             };
             404: components["responses"]["MeetingTypeNotFound"];

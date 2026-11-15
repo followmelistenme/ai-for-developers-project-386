@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: Календарь звонков
   version: 0.1.0
-  description: "Типы встреч одного владельца календаря: создание, публикация и гостевой каталог. Авторизации нет."
+  description: "Типы встреч одного владельца календаря: создание, публикация, гостевой каталог и выбор свободного слота. Авторизации нет."
 paths:
   /api/owner/meeting-types:
     get:
@@ -83,6 +83,36 @@ paths:
                 $ref: "#/components/schemas/MeetingType"
         "404":
           $ref: "#/components/responses/MeetingTypeNotFound"
+  /api/meeting-types/{meetingTypeId}/slots:
+    parameters:
+      - $ref: "#/components/parameters/MeetingTypeId"
+    get:
+      operationId: listAvailableSlots
+      summary: Свободные слоты опубликованного типа
+      description: Окно по Europe/Moscow от завтра до сегодня + 14 дней включительно. Рабочие часы 09:00–18:00, шаг стартов 30 минут. Выбор не резервирует время.
+      parameters:
+        - name: date
+          in: query
+          required: false
+          description: Календарная дата по Москве, YYYY-MM-DD. Без параметра выбирается первый день текущего окна.
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Актуальное окно записи и интервалы для выбранной даты
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AvailableSlots"
+        "400":
+          description: Некорректная дата или дата вне текущего окна записи
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationError"
+        "404":
+          $ref: "#/components/responses/MeetingTypeNotFound"
 components:
   parameters:
     MeetingTypeId:
@@ -101,6 +131,54 @@ components:
           schema:
             $ref: "#/components/schemas/MeetingTypeNotFoundError"
   schemas:
+    AvailableSlot:
+      type: object
+      additionalProperties: false
+      required: [start, end]
+      description: Свободный интервал; выбор не создаёт встречу.
+      properties:
+        start:
+          type: string
+          format: date-time
+          description: Начало включительно, RFC 3339.
+        end:
+          type: string
+          format: date-time
+          description: Окончание исключительно, RFC 3339.
+    AvailableSlots:
+      type: object
+      additionalProperties: false
+      required: [serverTime, nextWindowUpdate, timeZone, windowStart, windowEnd, selectedDate, slots]
+      properties:
+        nextWindowUpdate:
+          type: string
+          format: date-time
+          description: Точный момент следующего сдвига окна — ближайшая московская полночь.
+        serverTime:
+          type: string
+          format: date-time
+          description: Текущее время, захваченное один раз для этого ответа.
+        timeZone:
+          type: string
+          enum: [Europe/Moscow]
+          description: Часовой пояс календаря; не зависит от окружения сервера или браузера.
+        windowStart:
+          type: string
+          format: date
+          description: Первый день окна включительно по Москве.
+        windowEnd:
+          type: string
+          format: date
+          description: Последний день окна включительно по Москве.
+        selectedDate:
+          type: string
+          format: date
+          description: Выбранная календарная дата по Москве.
+        slots:
+          type: array
+          description: Интервалы в порядке начала; пустой список при отсутствии свободного времени.
+          items:
+            $ref: "#/components/schemas/AvailableSlot"
     MeetingTypeNotFoundError:
       type: object
       additionalProperties: false
@@ -167,6 +245,6 @@ components:
           description: Общее сообщение об ошибке.
         fields:
           type: object
-          description: Сообщения по полям name, description, durationMinutes; body для ошибки всего запроса.
+          description: Сообщения по полям name, description, durationMinutes, date; body для ошибки всего запроса.
           additionalProperties:
             type: string

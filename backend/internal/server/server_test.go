@@ -208,7 +208,7 @@ func TestContractDocumentationAndNoGuestDraftOrEditRoutes(t *testing.T) {
 				"CreateMeetingType", "durationMinutes", `"maxLength": 500`,
 				"Некорректный запрос; данные не сохранены", "ValidationError",
 				"POST /api/owner/meeting-types/{meetingTypeId}/publish", "GET /api/meeting-types/{meetingTypeId}", "MeetingTypeNotFoundError",
-				"Сообщения по полям name, description, durationMinutes; body для ошибки всего запроса.",
+				"Сообщения по полям name, description, durationMinutes, date; body для ошибки всего запроса.",
 			} {
 				if !strings.Contains(body, detail) {
 					t.Errorf("documentation is missing contract detail %q", detail)

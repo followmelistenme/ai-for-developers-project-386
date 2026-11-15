@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/getkin/kin-openapi/openapi3filter"
@@ -19,6 +20,12 @@ import (
 func validateRequest(router routers.Router) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		route, params, err := router.FindRoute(c.Request)
+		if err == nil && route.Path == "/api/meeting-types/{meetingTypeId}/slots" && c.Request.URL.Query().Has("date") {
+			if _, dateErr := time.Parse(time.DateOnly, c.Query("date")); dateErr != nil {
+				c.AbortWithStatusJSON(http.StatusBadRequest, api.ValidationError{Message: "Проверьте дату", Fields: map[string]string{"date": "Введите календарную дату в формате YYYY-MM-DD"}})
+				return
+			}
+		}
 		if err == nil && route.Operation.RequestBody != nil {
 			body, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20))
 			if err != nil || !json.Valid(body) {
