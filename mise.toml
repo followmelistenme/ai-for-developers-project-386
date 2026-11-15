@@ -39,3 +39,7 @@ run = "bash scripts/generate-api.sh --check"
 description = "Run the in-memory calendar API"
 dir = "backend"
 run = "go run ./cmd/server"
+
+[tasks.docker-check]
+description = "Build fresh containers and verify browser booking and restart cleanup"
+run = "bash scripts/docker-check.sh"
