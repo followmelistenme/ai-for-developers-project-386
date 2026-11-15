@@ -36,11 +36,11 @@ export function SlotPicker({ meetingTypeId }: { meetingTypeId: string }) {
   const inFlight = useRef(false)
   const attempt = useRef<Attempt | null>(null)
   const refresh = useCallback(() => {
-    if (locked.current || closed) return
+    if (locked.current || closed || view.missing) return
     setSelected(null)
     setView((current) => ({ ...current, loading: true, failed: false }))
     setQuery((current) => ({ ...current, revision: current.revision + 1 }))
-  }, [closed])
+  }, [closed, view.missing])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -144,6 +144,9 @@ export function SlotPicker({ meetingTypeId }: { meetingTypeId: string }) {
     <p role="alert" className="booking-message">Запись на этот тип встречи закрыта</p>
     <p className="owner-description">Владелец календаря окончательно закрыл запись по этой ссылке. Выберите другой тип встречи в каталоге.</p>
   </section>
+  if (view.missing && !submitting && !unknown) return <section className="owner-panel slot-state">
+    <p role="alert" className="booking-message">Тип встречи больше недоступен. Выберите другой тип в каталоге.</p>
+  </section>
   const data = view.data
   const ready = data && !view.loading && !view.failed && !view.missing
   return <section className="owner-panel slot-picker" aria-labelledby="slots-heading">
@@ -171,7 +174,6 @@ export function SlotPicker({ meetingTypeId }: { meetingTypeId: string }) {
     </div>}
     {view.loading && <p role="status" className="owner-description">Загружаем свободные слоты…</p>}
     {view.failed && <div className="slot-state"><p role="alert">Не удалось загрузить свободные слоты. Проверьте соединение и попробуйте ещё раз.</p><Button variant="outline" onClick={refresh}>Попробовать ещё раз</Button></div>}
-    {view.missing && <p role="alert">Тип встречи больше недоступен. Выберите другой тип в каталоге.</p>}
     {ready && <>
       <div className="slots-date-heading"><h3>{dateLabel(data.selectedDate)}</h3><Button variant="ghost" size="sm" disabled={submitting || unknown} onClick={refresh}><RefreshCw aria-hidden="true" /> Обновить слоты</Button></div>
       {data.slots.length === 0 ? <p role="status" className="owner-description">На эту дату нет свободных слотов. Выберите другую дату.</p> : <div className="slot-grid" role="group" aria-label="Свободные слоты по Москве">{data.slots.map((slot) => {

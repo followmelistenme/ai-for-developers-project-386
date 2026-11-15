@@ -70,6 +70,22 @@ func (c *Calendar) Withdraw(id string) (meetingtype.MeetingType, error) {
 	return meetingtype.MeetingType{}, ErrTypeUnavailable
 }
 
+// Delete checks all meetings and removes a type atomically with Confirm.
+func (c *Calendar) Delete(id string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i, item := range c.types {
+		if item.ID == id {
+			if slices.ContainsFunc(c.meetings, func(saved meeting.Meeting) bool { return saved.Type.ID == id }) {
+				return ErrTypeHasMeetings
+			}
+			c.types = slices.Delete(c.types, i, i+1)
+			return nil
+		}
+	}
+	return ErrTypeUnavailable
+}
+
 // PublishedMeetingTypes returns the guest-visible types in creation order.
 func (c *Calendar) PublishedMeetingTypes() []meetingtype.MeetingType {
 	c.mu.RLock()
@@ -99,6 +115,9 @@ func (c *Calendar) PublishedMeetingType(id string) (meetingtype.MeetingType, err
 	}
 	return meetingtype.MeetingType{}, ErrTypeUnavailable
 }
+
+// ErrTypeHasMeetings means at least one past, ongoing or future meeting prevents deletion.
+var ErrTypeHasMeetings = errors.New("meeting type has meetings")
 
 // ErrInvalidTransition means the requested lifecycle change is forbidden.
 var ErrInvalidTransition = errors.New("invalid meeting type transition")

@@ -28,6 +28,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/owner/meeting-types/{meetingTypeId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Уникальный идентификатор типа встречи. */
+                meetingTypeId: components["parameters"]["MeetingTypeId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Удалить тип встречи без встреч
+         * @description Окончательно удаляет тип в любом состоянии только при отсутствии любых встреч, включая прошедшие. Проверка и удаление атомарны с подтверждением. Старые ссылки получают 404; одноимённый новый тип имеет отдельный ID. Тело запроса не требуется.
+         */
+        delete: operations["deleteOwnerMeetingType"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/owner/meeting-types/{meetingTypeId}/publish": {
         parameters: {
             query?: never;
@@ -187,6 +210,13 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        MeetingTypeDeletionConflict: {
+            /**
+             * @description Любая встреча, включая прошедшую, запрещает удаление типа.
+             * @enum {string}
+             */
+            message: "Нельзя удалить тип встречи, по которому есть встречи";
+        };
         BookingClosedError: {
             /**
              * @description Окончательное закрытие новых бронирований по прежней ссылке.
@@ -422,6 +452,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ValidationError"];
+                };
+            };
+        };
+    };
+    deleteOwnerMeetingType: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Уникальный идентификатор типа встречи. */
+                meetingTypeId: components["parameters"]["MeetingTypeId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Тип удалён; тело ответа отсутствует */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["MeetingTypeNotFound"];
+            /** @description Есть хотя бы одна встреча; тип и все встречи сохранены. Опубликованный тип можно снять с публикации. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeetingTypeDeletionConflict"];
                 };
             };
         };

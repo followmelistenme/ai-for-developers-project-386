@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: Календарь звонков
   version: 0.1.0
-  description: "Типы встреч одного владельца календаря: создание, публикация и окончательное снятие публикации, гостевой каталог, свободные слоты и подтверждение встречи. Авторизации нет."
+  description: "Типы встреч одного владельца календаря: создание, публикация, окончательное снятие публикации и удаление без встреч, гостевой каталог, свободные слоты и подтверждение встречи. Авторизации нет."
 paths:
   /api/owner/meeting-types:
     get:
@@ -39,6 +39,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ValidationError"
+  /api/owner/meeting-types/{meetingTypeId}:
+    parameters:
+      - $ref: "#/components/parameters/MeetingTypeId"
+    delete:
+      operationId: deleteOwnerMeetingType
+      summary: Удалить тип встречи без встреч
+      description: Окончательно удаляет тип в любом состоянии только при отсутствии любых встреч, включая прошедшие. Проверка и удаление атомарны с подтверждением. Старые ссылки получают 404; одноимённый новый тип имеет отдельный ID. Тело запроса не требуется.
+      responses:
+        "204":
+          description: Тип удалён; тело ответа отсутствует
+        "404":
+          $ref: "#/components/responses/MeetingTypeNotFound"
+        "409":
+          description: Есть хотя бы одна встреча; тип и все встречи сохранены. Опубликованный тип можно снять с публикации.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeetingTypeDeletionConflict"
   /api/owner/meeting-types/{meetingTypeId}/publish:
     parameters:
       - $ref: "#/components/parameters/MeetingTypeId"
@@ -215,6 +233,15 @@ components:
           schema:
             $ref: "#/components/schemas/MeetingTypeNotFoundError"
   schemas:
+    MeetingTypeDeletionConflict:
+      type: object
+      additionalProperties: false
+      required: [message]
+      properties:
+        message:
+          type: string
+          enum: ["Нельзя удалить тип встречи, по которому есть встречи"]
+          description: Любая встреча, включая прошедшую, запрещает удаление типа.
     BookingClosedError:
       type: object
       additionalProperties: false

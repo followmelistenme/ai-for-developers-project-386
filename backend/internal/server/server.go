@@ -124,6 +124,17 @@ func (h *handler) WithdrawOwnerMeetingType(_ context.Context, request api.Withdr
 	return api.WithdrawOwnerMeetingType200JSONResponse(toDTO(item)), nil
 }
 
+func (h *handler) DeleteOwnerMeetingType(_ context.Context, request api.DeleteOwnerMeetingTypeRequestObject) (api.DeleteOwnerMeetingTypeResponseObject, error) {
+	err := h.calendar.Delete(request.MeetingTypeId)
+	if errors.Is(err, memory.ErrTypeHasMeetings) {
+		return api.DeleteOwnerMeetingType409JSONResponse{Message: "Нельзя удалить тип встречи, по которому есть встречи"}, nil
+	}
+	if err != nil {
+		return api.DeleteOwnerMeetingType404JSONResponse{MeetingTypeNotFoundJSONResponse: api.MeetingTypeNotFoundJSONResponse{Message: "Тип встречи не найден"}}, nil
+	}
+	return api.DeleteOwnerMeetingType204Response{}, nil
+}
+
 func bookingClosedDTO() api.BookingClosedJSONResponse {
 	return api.BookingClosedJSONResponse{Message: api.BookingClosedErrorMessage("Запись на этот тип встречи закрыта")}
 }

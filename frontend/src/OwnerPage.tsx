@@ -26,8 +26,11 @@ export function OwnerPage() {
   const [publishErrors, setPublishErrors] = useState<Record<string, string>>({})
   const [withdrawing, setWithdrawing] = useState<string[]>([])
   const [withdrawErrors, setWithdrawErrors] = useState<Record<string, string>>({})
+  const [deleting, setDeleting] = useState<string[]>([])
+  const [deleteErrors, setDeleteErrors] = useState<Record<string, string>>({})
   const [message, setMessage] = useState("")
   const nameInput = useRef<HTMLInputElement>(null)
+  const deletedIds = useRef(new Set<string>())
 
   useEffect(() => {
     const controller = new AbortController()
@@ -36,7 +39,7 @@ export function OwnerPage() {
         const { data, response } = await api.GET("/api/owner/meeting-types", { signal: controller.signal })
         if (!controller.signal.aborted) {
           if (!response.ok || !data) throw new Error("Не удалось загрузить типы встреч")
-          setTypes(data)
+          setTypes(data.filter((type) => !deletedIds.current.has(type.id)))
           setLoadError("")
         }
       } catch {
@@ -93,10 +96,12 @@ export function OwnerPage() {
     setPublishErrors((previous) => ({ ...previous, [id]: "" }))
     try {
       const { data, response } = await api.POST("/api/owner/meeting-types/{meetingTypeId}/publish", { params: { path: { meetingTypeId: id } } })
+      if (deletedIds.current.has(id)) return
       if (!response.ok || !data) throw new Error("Publication failed")
       setTypes((previous) => previous.map((type) => type.id === id ? data : type))
       setMessage("Тип встречи опубликован")
     } catch {
+      if (deletedIds.current.has(id)) return
       setPublishErrors((previous) => ({ ...previous, [id]: "Не удалось опубликовать тип встречи. Попробуйте ещё раз." }))
     } finally {
       setPublishing((previous) => previous.filter((item) => item !== id))
@@ -109,13 +114,38 @@ export function OwnerPage() {
     setWithdrawErrors((previous) => ({ ...previous, [id]: "" }))
     try {
       const { data, response } = await api.POST("/api/owner/meeting-types/{meetingTypeId}/withdraw", { params: { path: { meetingTypeId: id } } })
+      if (deletedIds.current.has(id)) return
       if (!response.ok || !data) throw new Error("Withdrawal failed")
       setTypes((previous) => previous.map((type) => type.id === id ? data : type))
       setMessage("Публикация снята. Существующие встречи сохранены.")
     } catch {
+      if (deletedIds.current.has(id)) return
       setWithdrawErrors((previous) => ({ ...previous, [id]: "Не удалось снять публикацию. Проверьте соединение и попробуйте ещё раз." }))
     } finally {
       setWithdrawing((previous) => previous.filter((item) => item !== id))
+    }
+  }
+
+  async function deleteType(id: string) {
+    if (deleting.includes(id)) return
+    setDeleting((previous) => [...previous, id])
+    setDeleteErrors((previous) => ({ ...previous, [id]: "" }))
+    try {
+      const { response, error } = await api.DELETE("/api/owner/meeting-types/{meetingTypeId}", { params: { path: { meetingTypeId: id } } })
+      // A lost successful response can be retried: 404 also removes the stale card.
+      if (response.status === 204 || response.status === 404) {
+        deletedIds.current.add(id)
+        setTypes((previous) => previous.filter((type) => type.id !== id))
+        setMessage("Тип встречи удалён")
+      } else if (response.status === 409 && error) {
+        setDeleteErrors((previous) => ({ ...previous, [id]: error.message }))
+      } else {
+        throw new Error("Deletion failed")
+      }
+    } catch {
+      setDeleteErrors((previous) => ({ ...previous, [id]: "Не удалось удалить тип встречи. Проверьте соединение и попробуйте ещё раз." }))
+    } finally {
+      setDeleting((previous) => previous.filter((item) => item !== id))
     }
   }
 
@@ -193,18 +223,21 @@ export function OwnerPage() {
                 <>
                   <p className="field-hint">Недоступен гостям. Опубликуйте тип, чтобы он появился в каталоге.</p>
                   {publishErrors[type.id] && <p className="field-error" role="alert">{publishErrors[type.id]}</p>}
-                  <Button className="publish-button" disabled={publishing.includes(type.id)} onClick={() => { void publish(type.id) }}>{publishing.includes(type.id) ? "Публикуем…" : "Опубликовать"}</Button>
+                  <Button className="publish-button" disabled={publishing.includes(type.id) || deleting.includes(type.id)} onClick={() => { void publish(type.id) }}>{publishing.includes(type.id) ? "Публикуем…" : "Опубликовать"}</Button>
                 </>
               ) : type.status === "published" ? (
                 <>
                   <Button asChild variant="outline"><a href={`/booking/${encodeURIComponent(type.id)}`}>Открыть страницу типа</a></Button>
                   <p className="field-hint" id={`withdraw-hint-${type.id}`}>Снятие публикации окончательно. Новые записи прекратятся, существующие встречи сохранятся. Чтобы открыть запись снова, создайте новый тип встречи.</p>
                   {withdrawErrors[type.id] && <p className="field-error" role="alert">{withdrawErrors[type.id]}</p>}
-                  <Button variant="outline" aria-describedby={`withdraw-hint-${type.id}`} disabled={withdrawing.includes(type.id)} onClick={() => { void withdraw(type.id) }}>{withdrawing.includes(type.id) ? "Снимаем публикацию…" : "Снять публикацию"}</Button>
+                  <Button variant="outline" aria-describedby={`withdraw-hint-${type.id}`} disabled={withdrawing.includes(type.id) || deleting.includes(type.id)} onClick={() => { void withdraw(type.id) }}>{withdrawing.includes(type.id) ? "Снимаем публикацию…" : "Снять публикацию"}</Button>
                 </>
               ) : (
                 <p className="field-hint">Запись окончательно закрыта. Существующие встречи сохранены. Для новой записи создайте новый тип встречи.</p>
               )}
+              <p className="field-hint" id={`delete-hint-${type.id}`}>Удаление доступно, только если по типу нет встреч, включая прошедшие.</p>
+              {deleteErrors[type.id] && <p className="field-error" role="alert">{deleteErrors[type.id]}</p>}
+              <Button variant="outline" aria-describedby={`delete-hint-${type.id}`} disabled={deleting.includes(type.id)} onClick={() => { void deleteType(type.id) }}>{deleting.includes(type.id) ? "Удаляем…" : "Удалить"}</Button>
             </article>
           ))}
         </div>
