@@ -36,10 +36,14 @@ func New() (http.Handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("serialize OpenAPI YAML: %w", err)
 	}
+	docs, err := renderDocumentation(spec)
+	if err != nil {
+		return nil, fmt.Errorf("render OpenAPI documentation: %w", err)
+	}
 	router := gin.New()
 	router.GET("/openapi.json", func(c *gin.Context) { c.Data(http.StatusOK, "application/json; charset=utf-8", jsonSpec) })
 	router.GET("/openapi.yaml", func(c *gin.Context) { c.Data(http.StatusOK, "application/yaml; charset=utf-8", yamlSpec) })
-	router.GET("/docs", func(c *gin.Context) { c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(documentation)) })
+	router.GET("/docs", func(c *gin.Context) { c.Data(http.StatusOK, "text/html; charset=utf-8", docs) })
 	group := router.Group("")
 	group.Use(validateRequest(validator))
 	api.RegisterHandlers(group, api.NewStrictHandlerWithOptions(&handler{calendar: &memory.Calendar{}}, nil, api.StrictGinServerOptions{
@@ -49,24 +53,6 @@ func New() (http.Handler, error) {
 	}))
 	return router, nil
 }
-
-const documentation = `<!doctype html>
-<html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Календарь звонков — API</title>
-<style>body{font:16px/1.6 system-ui;max-width:780px;margin:40px auto;padding:0 24px;background:#0c0d11;color:#f1f2f6}a{color:#91aaff}pre{overflow:auto;padding:20px;background:#191c25}code{overflow-wrap:anywhere}</style>
-<h1>Календарь звонков — API</h1>
-<p>Один владелец календаря, без авторизации. Данные существуют до перезапуска процесса.</p>
-<p>Контракт: <a href="/openapi.json">OpenAPI JSON</a> · <a href="/openapi.yaml">OpenAPI YAML</a></p>
-<h2>GET /api/owner/meeting-types</h2>
-<p>200: массив типов встреч в порядке создания, изначально пустой.</p>
-<h2>POST /api/owner/meeting-types</h2>
-<p>Content-Type: application/json. Создаёт черновик, недоступный гостям.</p>
-<pre>{"name":"Знакомство","description":"Короткий разговор","durationMinutes":30}</pre>
-<p>Название обязательно: 1–100 символов Unicode после обрезки пробелов по краям. Описание необязательно: обычный текст до 500 символов Unicode. Длительность: 15, 30, 45 или 60 минут. Одинаковые названия разрешены.</p>
-<p>201: созданный тип с уникальным id, name, description, durationMinutes и status: draft.</p>
-<p>400: данные не сохранены. message содержит общее сообщение, fields — ошибки по полям; body обозначает ошибку всего запроса.</p>
-<pre>{"message":"Проверьте данные","fields":{"name":"Введите название от 1 до 100 символов"}}</pre>
-</html>`
 
 func (h *handler) ListOwnerMeetingTypes(context.Context, api.ListOwnerMeetingTypesRequestObject) (api.ListOwnerMeetingTypesResponseObject, error) {
 	result := api.ListOwnerMeetingTypes200JSONResponse{}

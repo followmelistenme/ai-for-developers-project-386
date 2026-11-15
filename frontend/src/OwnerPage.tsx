@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button"
 type MeetingType = components["schemas"]["MeetingType"]
 type DraftInput = components["schemas"]["CreateMeetingType"]
 
+const durations: DraftInput["durationMinutes"][] = [15, 30, 45, 60]
+
 export function OwnerPage() {
   const [types, setTypes] = useState<MeetingType[]>([])
   const [loading, setLoading] = useState(true)
@@ -121,10 +123,10 @@ export function OwnerPage() {
             <div className="form-field duration-field">
               <label htmlFor="draft-duration">Длительность</label>
               <select id="draft-duration" value={durationMinutes} disabled={saving} aria-invalid={Boolean(fields.durationMinutes)} aria-describedby="duration-error" onChange={(event) => {
-                const value = Number(event.target.value)
-                if (value === 15 || value === 30 || value === 45 || value === 60) setDurationMinutes(value)
+                const value = durations.find((duration) => String(duration) === event.target.value)
+                if (value !== undefined) setDurationMinutes(value)
               }}>
-                {[15, 30, 45, 60].map((duration) => <option key={duration} value={duration}>{duration} минут</option>)}
+                {durations.map((duration) => <option key={duration} value={duration}>{duration} минут</option>)}
               </select>
               <p id="duration-error" className="field-error">{fields.durationMinutes}</p>
             </div>

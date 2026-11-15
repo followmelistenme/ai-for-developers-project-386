@@ -3,6 +3,7 @@ package server_test
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -197,6 +198,20 @@ func TestContractDocumentationAndNoGuestOrEditDraftRoutes(t *testing.T) {
 		}
 		if path == "/openapi.json" && !json.Valid(response.Body.Bytes()) {
 			t.Error("OpenAPI JSON is invalid")
+		}
+		if path == "/docs" {
+			body := html.UnescapeString(response.Body.String())
+			for _, detail := range []string{
+				"POST /api/owner/meeting-types",
+				"Сохраняет новый черновик. Одинаковые названия разрешены. Черновики недоступны в гостевом интерфейсе.",
+				"CreateMeetingType", "durationMinutes", `"maxLength": 500`,
+				"Некорректный запрос; данные не сохранены", "ValidationError",
+				"Сообщения по полям name, description, durationMinutes; body для ошибки всего запроса.",
+			} {
+				if !strings.Contains(body, detail) {
+					t.Errorf("documentation is missing contract detail %q", detail)
+				}
+			}
 		}
 	}
 	created := post(t, h, `{"name":"Скрытый черновик","durationMinutes":30}`)
