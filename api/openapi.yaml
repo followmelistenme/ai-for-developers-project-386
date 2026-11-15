@@ -1,0 +1,103 @@
+openapi: 3.0.3
+info:
+  title: Календарь звонков
+  version: 0.1.0
+  description: Управление черновиками типов встреч одного владельца календаря. Авторизации нет.
+paths:
+  /api/owner/meeting-types:
+    get:
+      operationId: listOwnerMeetingTypes
+      summary: Список типов встреч владельца
+      description: Возвращает сохранённые типы встреч, включая черновики. Новый процесс начинает с пустого списка.
+      responses:
+        "200":
+          description: Список типов встреч
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeetingTypeList"
+    post:
+      operationId: createOwnerMeetingType
+      summary: Создать черновик типа встречи
+      description: Сохраняет новый черновик. Одинаковые названия разрешены. Черновики недоступны в гостевом интерфейсе.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateMeetingType"
+      responses:
+        "201":
+          description: Черновик создан
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeetingType"
+        "400":
+          description: Некорректный запрос; данные не сохранены
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationError"
+components:
+  schemas:
+    CreateMeetingType:
+      type: object
+      additionalProperties: false
+      required: [name, durationMinutes]
+      properties:
+        name:
+          type: string
+          description: Название; после обрезки пробелов по краям от 1 до 100 символов Unicode.
+        description:
+          type: string
+          maxLength: 500
+          description: Необязательное описание обычным текстом, до 500 символов Unicode. Разметка не интерпретируется.
+        durationMinutes:
+          type: integer
+          enum: [15, 30, 45, 60]
+          description: Длительность встречи в минутах.
+    MeetingType:
+      type: object
+      additionalProperties: false
+      required: [id, name, description, durationMinutes, status]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          description: Уникальный идентификатор, назначенный сервером.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Название с обрезанными пробелами по краям.
+        description:
+          type: string
+          maxLength: 500
+          description: Обычный текст; пустая строка, если описание не задано.
+        durationMinutes:
+          type: integer
+          enum: [15, 30, 45, 60]
+          description: Длительность встречи в минутах.
+        status:
+          type: string
+          enum: [draft]
+          description: Сохранённый черновик недоступен гостям для записи.
+    MeetingTypeList:
+      type: array
+      description: Типы встреч в порядке создания.
+      items:
+        $ref: "#/components/schemas/MeetingType"
+    ValidationError:
+      type: object
+      required: [message, fields]
+      additionalProperties: false
+      properties:
+        message:
+          type: string
+          description: Общее сообщение об ошибке.
+        fields:
+          type: object
+          description: Сообщения по полям name, description, durationMinutes; body для ошибки всего запроса.
+          additionalProperties:
+            type: string

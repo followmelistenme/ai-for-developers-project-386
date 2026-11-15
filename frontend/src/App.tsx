@@ -12,6 +12,7 @@ import {
   UserRound,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { OwnerPage } from "@/OwnerPage"
 
 function Brand() {
   return (
@@ -111,6 +112,7 @@ function BookingPlaceholder() {
 
 export default function App() {
   const isBookingPage = window.location.pathname === "/booking"
+  const isOwnerPage = window.location.pathname === "/owner"
 
   return (
     <div className="app-shell">
@@ -118,15 +120,16 @@ export default function App() {
       <header className="site-header">
         <div className="container header-content">
           <Brand />
-          {!isBookingPage && (
-            <nav className="header-nav" aria-label="Главная навигация">
+          <nav className="header-nav" aria-label="Главная навигация">
+            <a className="owner-link" href="/owner" aria-current={isOwnerPage ? "page" : undefined}>Для владельца</a>
+            {!isBookingPage && !isOwnerPage && (<>
               <a className="how-link" href="#how-it-works">Как это работает</a>
               <BookingLink />
-            </nav>
-          )}
+            </>)}
+          </nav>
         </div>
       </header>
-      {isBookingPage ? <BookingPlaceholder /> : (
+      {isOwnerPage ? <OwnerPage /> : isBookingPage ? <BookingPlaceholder /> : (
         <main id="main" tabIndex={-1}>
           <section className="container hero" aria-labelledby="hero-title">
             <div className="hero-copy">

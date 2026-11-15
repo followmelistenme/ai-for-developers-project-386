@@ -27,6 +27,9 @@ local fast = new Mapping<String, Step> {
 }
 
 local complete = (fast) {
+  ["api-generation"] {
+    check = "bash scripts/generate-api.sh --check"
+  }
   ["frontend-test"] {
     // Playwright builds and typechecks the app before starting the preview server.
     check = "npm --prefix frontend test"

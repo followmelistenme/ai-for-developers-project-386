@@ -26,3 +26,16 @@ run = "hk fix --all"
 [tasks.hooks]
 description = "Install repository-local Git hooks using mise"
 run = "hk install --mise"
+
+[tasks.generate]
+description = "Generate Go and TypeScript from the OpenAPI contract"
+run = "bash scripts/generate-api.sh"
+
+[tasks.api-check]
+description = "Check committed OpenAPI generation without changing files"
+run = "bash scripts/generate-api.sh --check"
+
+[tasks.backend]
+description = "Run the in-memory calendar API"
+dir = "backend"
+run = "go run ./cmd/server"
