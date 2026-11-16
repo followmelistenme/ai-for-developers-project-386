@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from "react"
 import { CalendarDays, Clock3, Plus } from "lucide-react"
 import { OwnerMeetings } from "@/OwnerMeetings"
-import { api } from "@/api/client"
-import type { components } from "@/api/generated/schema"
+import { createOwnerMeetingType, deleteOwnerMeetingType, listOwnerMeetingTypes, publishOwnerMeetingType, withdrawOwnerMeetingType } from "@/api/generated/sdk.gen"
+import type { CreateMeetingType, MeetingType } from "@/api/generated/types.gen"
 import { Button } from "@/components/ui/button"
 
-type MeetingType = components["schemas"]["MeetingType"]
-type DraftInput = components["schemas"]["CreateMeetingType"]
+type DraftInput = CreateMeetingType
 
 const durations: DraftInput["durationMinutes"][] = [15, 30, 45, 60]
 
@@ -36,9 +35,9 @@ export function OwnerPage() {
     const controller = new AbortController()
     async function load() {
       try {
-        const { data, response } = await api.GET("/api/owner/meeting-types", { signal: controller.signal })
+        const { data, response } = await listOwnerMeetingTypes({ signal: controller.signal })
         if (!controller.signal.aborted) {
-          if (!response.ok || !data) throw new Error("Не удалось загрузить типы встреч")
+          if (!response?.ok || !data) throw new Error("Не удалось загрузить типы встреч")
           setTypes(data.filter((type) => !deletedIds.current.has(type.id)))
           setLoadError("")
         }
@@ -69,7 +68,8 @@ export function OwnerPage() {
     setSaveError("")
     setFields({})
     try {
-      const { data, error } = await api.POST("/api/owner/meeting-types", { body: { name, description, durationMinutes } })
+      const { data, error, response } = await createOwnerMeetingType({ body: { name, description, durationMinutes } })
+      if (!response) throw new Error("Draft request failed")
       if (error) {
         setSaveError(error.message)
         setFields(error.fields)
@@ -95,9 +95,9 @@ export function OwnerPage() {
     setPublishing((previous) => [...previous, id])
     setPublishErrors((previous) => ({ ...previous, [id]: "" }))
     try {
-      const { data, response } = await api.POST("/api/owner/meeting-types/{meetingTypeId}/publish", { params: { path: { meetingTypeId: id } } })
+      const { data, response } = await publishOwnerMeetingType({ path: { meetingTypeId: id } })
       if (deletedIds.current.has(id)) return
-      if (!response.ok || !data) throw new Error("Publication failed")
+      if (!response?.ok || !data) throw new Error("Publication failed")
       setTypes((previous) => previous.map((type) => type.id === id ? data : type))
       setMessage("Тип встречи опубликован")
     } catch {
@@ -113,9 +113,9 @@ export function OwnerPage() {
     setWithdrawing((previous) => [...previous, id])
     setWithdrawErrors((previous) => ({ ...previous, [id]: "" }))
     try {
-      const { data, response } = await api.POST("/api/owner/meeting-types/{meetingTypeId}/withdraw", { params: { path: { meetingTypeId: id } } })
+      const { data, response } = await withdrawOwnerMeetingType({ path: { meetingTypeId: id } })
       if (deletedIds.current.has(id)) return
-      if (!response.ok || !data) throw new Error("Withdrawal failed")
+      if (!response?.ok || !data) throw new Error("Withdrawal failed")
       setTypes((previous) => previous.map((type) => type.id === id ? data : type))
       setMessage("Публикация снята. Существующие встречи сохранены.")
     } catch {
@@ -131,13 +131,13 @@ export function OwnerPage() {
     setDeleting((previous) => [...previous, id])
     setDeleteErrors((previous) => ({ ...previous, [id]: "" }))
     try {
-      const { response, error } = await api.DELETE("/api/owner/meeting-types/{meetingTypeId}", { params: { path: { meetingTypeId: id } } })
+      const { response, error } = await deleteOwnerMeetingType({ path: { meetingTypeId: id } })
       // A lost successful response can be retried: 404 also removes the stale card.
-      if (response.status === 204 || response.status === 404) {
+      if (response?.status === 204 || response?.status === 404) {
         deletedIds.current.add(id)
         setTypes((previous) => previous.filter((type) => type.id !== id))
         setMessage("Тип встречи удалён")
-      } else if (response.status === 409 && error) {
+      } else if (response?.status === 409 && error) {
         setDeleteErrors((previous) => ({ ...previous, [id]: error.message }))
       } else {
         throw new Error("Deletion failed")

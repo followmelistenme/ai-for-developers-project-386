@@ -2,6 +2,7 @@
 
 
 [![hexlet-check](https://github.com/followmelistenme/ai-for-developers-project-386/actions/workflows/hexlet-check.yml/badge.svg)](https://github.com/followmelistenme/ai-for-developers-project-386/actions)
+[![Quality](https://github.com/followmelistenme/ai-for-developers-project-386/actions/workflows/quality.yml/badge.svg)](https://github.com/followmelistenme/ai-for-developers-project-386/actions/workflows/quality.yml)
 
 Разработайте совместно с ИИ сервис для бронирования календаря
 
@@ -12,14 +13,15 @@
 
 - Бэкенд: Go, Gin; генерация DTO и серверного интерфейса через oapi-codegen.
 - Фронтенд: React, TypeScript, Vite, Tailwind CSS и [shadcn/ui](https://ui.shadcn.com/docs/installation/vite).
-- Контракт API: OpenAPI-first; TypeScript-типы генерируются через
-  openapi-typescript, HTTP-запросы выполняются через openapi-fetch.
+- Контракт API: OpenAPI-first; TypeScript DTO, SDK-функции и Fetch-клиент
+  генерируются через Hey API.
 
-### Контракт API и генерация типов
+### Контракт API и генерация SDK
 
 Принята связка **Gin + oapi-codegen** для бэкенда и
-**openapi-typescript + openapi-fetch** для фронтенда.
-Обоснование — в [ADR-0001](docs/adr/0001-openapi-contract-first.md).
+**Hey API + Fetch** для фронтенда.
+Обоснование — в [ADR-0001](docs/adr/0001-openapi-contract-first.md) и
+[ADR-0002](docs/adr/0002-generated-client-sdk.md).
 
 Общий контракт находится в `api/openapi.yaml`.
 Из одного файла генерируются:
@@ -27,13 +29,16 @@
 - `backend/internal/api/api.gen.go` — Go DTO запросов и ответов,
   серверный интерфейс и HTTP-обвязка для Gin. Параметры oapi-codegen:
   `models`, `gin-server`, `strict-server`, `embedded-spec`.
-- `frontend/src/api/generated/schema.d.ts` — TypeScript-типы схем
-  и операций для типизированного клиента openapi-fetch.
+- `frontend/src/api/generated/` — TypeScript DTO (`types.gen.ts`),
+  SDK-функции по `operationId` (`sdk.gen.ts`), экземпляр клиента
+  (`client.gen.ts`) и Fetch runtime (`client/`, `core/`).
+  Прикладной код вызывает SDK-функции, например `confirmMeeting`,
+  и не собирает HTTP-пути вручную.
 
 Порядок работы: изменить контракт → запустить оба генератора → реализовать
 или обновить обработчики и вызовы клиента → выполнить проверки.
 Используйте именованные схемы в `components/schemas` и стабильные `operationId`.
-Версии закреплены: oapi-codegen 2.8.2 и openapi-typescript 7.13.0.
+Версии закреплены: oapi-codegen 2.8.2 и @hey-api/openapi-ts 0.99.0.
 Сгенерированные файлы хранятся в Git и обновляются только генерацией:
 
 ```bash
@@ -42,10 +47,12 @@ mise run generate
 mise run api-check
 ```
 
-`api-check` проверяет оба результата без изменения файлов и входит
-в `mise run check` и CI. Инструменты TypeScript-генерации изолированы
-в `api/package.json`: openapi-typescript требует TypeScript 5.x,
-а само приложение использует закреплённый TypeScript 6.0.3.
+`api-check` генерирует оба результата во временные пути и сравнивает
+с закоммиченными файлами, включая полный состав дерева SDK; рабочие файлы
+не изменяются. Проверка входит в `mise run check` и CI. Генератор изолирован
+в `api/package.json`; приложение использует TypeScript 6.0.3.
+Для генератора закреплена js-yaml 4.3.2 с исправлениями YAML DoS;
+при обновлении Hey API проверьте, можно ли удалить override.
 
 Валидация входящих запросов по OpenAPI подключается отдельно:
 `strict-server` и TypeScript-типы не обеспечивают полную проверку данных
@@ -450,9 +457,9 @@ mise run check
 совпадает с `.nvmrc`: при обновлении меняйте оба файла. Для `mise run check`
 предварительный `nvm use` не нужен. Команда `mise run check`
 запускает все проверки, включая проверку типов, сборку фронтенда и дымовой тест
-в Chromium; CI использует ту же команду при каждом push (включая ветки и теги),
+в Chromium; CI использует ту же команду при push в `main` и для pull request,
 еженедельно и при ручном запуске workflow. Отдельный триггер pull request
-не добавлен, чтобы push в ветку открытого PR не запускал проверки дважды.
+включён; push ограничен `main`, чтобы изменения ветки PR не проверялись дважды.
 Для защиты слияний назначьте `Quality gates` обязательной
 проверкой в настройках GitHub ruleset / branch protection.
 Отдельная задача `Container acceptance` в том же workflow запускает

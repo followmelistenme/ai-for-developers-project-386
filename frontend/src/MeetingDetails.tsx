@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react"
 import { CalendarCheck2, Copy } from "lucide-react"
-import type { components } from "@/api/generated/schema"
+import type { Meeting } from "@/api/generated/types.gen"
 import { Button } from "@/components/ui/button"
 
-export type Meeting = components["schemas"]["Meeting"]
+export type { Meeting }
 
 export function MeetingDetails({ meeting }: { meeting: Meeting }) {
   const [year, month, day] = meeting.date.split("-")

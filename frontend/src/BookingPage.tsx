@@ -1,11 +1,9 @@
 import { useEffect, useState } from "react"
 import { ArrowLeft, ArrowUpRight, CalendarDays, Clock3 } from "lucide-react"
 import { SlotPicker } from "@/SlotPicker"
-import { api } from "@/api/client"
-import type { components } from "@/api/generated/schema"
+import { getPublishedMeetingType, listPublishedMeetingTypes } from "@/api/generated/sdk.gen"
+import type { MeetingType } from "@/api/generated/types.gen"
 import { Button } from "@/components/ui/button"
-
-type MeetingType = components["schemas"]["MeetingType"]
 
 export function BookingPage() {
   const path = window.location.pathname.replace(/\/+$/, "")
@@ -23,16 +21,16 @@ export function BookingPage() {
       try {
         if (id !== undefined) {
           if (id.includes("/")) { setMissing(true); return }
-          const { data, response } = await api.GET("/api/meeting-types/{meetingTypeId}", { params: { path: { meetingTypeId: id } }, signal: controller.signal })
+          const { data, response } = await getPublishedMeetingType({ path: { meetingTypeId: id }, signal: controller.signal })
           if (controller.signal.aborted) return
-          if (response.status === 410) { setClosed(true); return }
-          if (response.status === 404) { setMissing(true); return }
-          if (!response.ok || !data) throw new Error("Failed to load meeting type")
+          if (response?.status === 410) { setClosed(true); return }
+          if (response?.status === 404) { setMissing(true); return }
+          if (!response?.ok || !data) throw new Error("Failed to load meeting type")
           setTypes([data])
         } else {
-          const { data, response } = await api.GET("/api/meeting-types", { signal: controller.signal })
+          const { data, response } = await listPublishedMeetingTypes({ signal: controller.signal })
           if (controller.signal.aborted) return
-          if (!response.ok || !data) throw new Error("Failed to load catalogue")
+          if (!response?.ok || !data) throw new Error("Failed to load catalogue")
           setTypes(data)
         }
       } catch {

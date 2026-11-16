@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
 import { RefreshCw } from "lucide-react"
-import { api } from "@/api/client"
+import { listOwnerMeetings } from "@/api/generated/sdk.gen"
 import { MeetingDetails, type Meeting } from "@/MeetingDetails"
 import { Button } from "@/components/ui/button"
 
@@ -14,9 +14,9 @@ export function OwnerMeetings() {
     const controller = new AbortController()
     async function load() {
       try {
-        const { data, response } = await api.GET("/api/owner/meetings", { signal: controller.signal })
+        const { data, response } = await listOwnerMeetings({ signal: controller.signal })
         if (controller.signal.aborted) return
-        if (!response.ok || !data) throw new Error("Failed to load meetings")
+        if (!response?.ok || !data) throw new Error("Failed to load meetings")
         setMeetings(data)
       } catch {
         if (!controller.signal.aborted) setFailed(true)

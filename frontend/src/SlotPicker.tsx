@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { CalendarDays, RefreshCw } from "lucide-react"
 import { MeetingConfirmation, type Meeting } from "@/MeetingDetails"
-import { api } from "@/api/client"
-import type { components } from "@/api/generated/schema"
+import { confirmMeeting, listAvailableSlots } from "@/api/generated/sdk.gen"
+import type { AvailableSlot, AvailableSlots, ConfirmMeeting } from "@/api/generated/types.gen"
 import { Button } from "@/components/ui/button"
 
-type Availability = components["schemas"]["AvailableSlots"]
-type Slot = components["schemas"]["AvailableSlot"]
-type Attempt = { meetingTypeId: string, body: components["schemas"]["ConfirmMeeting"] }
+type Availability = AvailableSlots
+type Slot = AvailableSlot
+type Attempt = { meetingTypeId: string, body: ConfirmMeeting }
 type View = { data?: Availability, loading: boolean, failed: boolean, missing: boolean, deadline?: number }
 
 function timeLabel(instant: string, timeZone: string) {
@@ -47,19 +47,19 @@ export function SlotPicker({ meetingTypeId }: { meetingTypeId: string }) {
     async function load() {
       const started = performance.now()
       try {
-        const options = { params: { path: { meetingTypeId }, query: query.date ? { date: query.date } : {} }, signal: controller.signal }
-        const result = await api.GET("/api/meeting-types/{meetingTypeId}/slots", options)
+        const options = { path: { meetingTypeId }, query: query.date ? { date: query.date } : {}, signal: controller.signal }
+        const result = await listAvailableSlots(options)
         // An unrelated availability response must not replace a pending or recoverable attempt.
         if (controller.signal.aborted || locked.current) return
-        if (result.response.status === 410) { setClosed(true); return }
+        if (result.response?.status === 410) { setClosed(true); return }
         // A date can leave the live window while the page is open. Ask the server for its new first day.
-        if (result.response.status === 400 && query.date && !controller.signal.aborted) {
+        if (result.response?.status === 400 && query.date && !controller.signal.aborted) {
           setQuery((current) => ({ date: undefined, revision: current.revision + 1 }))
           return
         }
         if (controller.signal.aborted) return
-        if (result.response.status === 404) { setView({ loading: false, failed: false, missing: true }); return }
-        if (!result.response.ok || !result.data) throw new Error("Failed to load slots")
+        if (result.response?.status === 404) { setView({ loading: false, failed: false, missing: true }); return }
+        if (!result.response?.ok || !result.data) throw new Error("Failed to load slots")
         const data = result.data
         // Use server time and elapsed request time; the browser clock may be wrong.
         const deadline = started + Date.parse(data.nextWindowUpdate) - Date.parse(data.serverTime)
@@ -107,24 +107,24 @@ export function SlotPicker({ meetingTypeId }: { meetingTypeId: string }) {
     setMessage("")
     setFields({})
     try {
-      const result = await api.POST("/api/meeting-types/{meetingTypeId}/meetings", { params: { path: { meetingTypeId: pending.meetingTypeId } }, body: pending.body })
-      if (result.response.status === 201 && result.data) {
+      const result = await confirmMeeting({ path: { meetingTypeId: pending.meetingTypeId }, body: pending.body })
+      if (result.response?.status === 201 && result.data) {
         setConfirmed(result.data)
-      } else if (result.response.status === 409 && result.error && "availability" in result.error) {
+      } else if (result.response?.status === 409 && result.error && "availability" in result.error) {
         const data = result.error.availability
         setView({ data, loading: false, failed: false, missing: false, deadline: performance.now() + Date.parse(data.nextWindowUpdate) - Date.parse(data.serverTime) })
         setSelected(null)
         setMessage(result.error.message)
         allowNewAttempt()
-      } else if (result.response.status === 400 && result.error && "fields" in result.error) {
+      } else if (result.response?.status === 400 && result.error && "fields" in result.error) {
         setMessage(result.error.message)
         setFields(result.error.fields)
         allowNewAttempt()
-      } else if (result.response.status === 410) {
+      } else if (result.response?.status === 410) {
         setClosed(true)
         setSelected(null)
         allowNewAttempt()
-      } else if (result.response.status === 404) {
+      } else if (result.response?.status === 404) {
         setView((current) => ({ ...current, missing: true }))
         setSelected(null)
         allowNewAttempt()

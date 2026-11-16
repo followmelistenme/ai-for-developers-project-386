@@ -14,6 +14,9 @@ openapi-typescript для клиента openapi-fetch.
 
 ## Последствия
 
+Клиентская часть решения заменена в [ADR-0002](0002-generated-client-sdk.md):
+вместо openapi-typescript/openapi-fetch генерируется SDK Hey API.
+
 - Сгенерированные файлы коммитятся в Git; изменения вносятся через контракт.
 - Для oapi-codegen используются `models`, `gin-server`, `strict-server`
   и `embedded-spec`.

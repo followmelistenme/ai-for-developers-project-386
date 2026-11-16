@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "@playwright/test"
-import type { components } from "../../src/api/generated/schema"
+import type { AvailableSlots, ConfirmMeeting } from "../../src/api/generated/types.gen"
 
 function compose(args: string[], env = process.env) {
   const project = process.env.COMPOSE_PROJECT_NAME
@@ -50,7 +50,7 @@ test("создание, публикация и запись по Москве �
   expect(link).toMatch(/^\/booking\/[^/]+$/)
   const bookingPath = link as string
   const typeId = bookingPath.split("/").at(-1) as string
-  const available = await (await request.get(`/api/meeting-types/${typeId}/slots`)).json() as components["schemas"]["AvailableSlots"]
+  const available = await (await request.get(`/api/meeting-types/${typeId}/slots`)).json() as AvailableSlots
   expect(available.timeZone).toBe("Europe/Moscow")
   // Derive the calendar date from the server instant in Moscow, not the browser's zone.
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Moscow", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(available.serverTime))
@@ -72,7 +72,7 @@ test("создание, публикация и запись по Москве �
   await page.getByLabel("Email", { exact: true }).fill("anna@example.com")
   const submitted = page.waitForRequest((outgoing) => outgoing.method() === "POST" && outgoing.url().endsWith("/meetings"))
   await page.getByRole("button", { name: "Подтвердить запись", exact: true }).click()
-  const attempt = (await submitted).postDataJSON() as components["schemas"]["ConfirmMeeting"]
+  const attempt = (await submitted).postDataJSON() as ConfirmMeeting
   await expect(page.getByRole("heading", { name: "Вы записаны на звонок" })).toBeVisible()
   await expect(page.getByRole("region", { name: "Вы записаны на звонок" })).toContainText("09:00–09:30 по Москве")
   await expect(page.getByLabel("Ссылка для звонка", { exact: true })).toHaveValue(/^http:\/\/localhost\/event\/.+/)
