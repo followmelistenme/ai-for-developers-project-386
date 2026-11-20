@@ -15,8 +15,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	handler = withFrontend(handler, os.Getenv("FRONTEND_DIR"))
 	host := envOr("BACKEND_HOST", "127.0.0.1")
-	port := envOr("BACKEND_PORT", "8080")
+	port := envOr("BACKEND_PORT", envOr("PORT", "8080"))
 	httpServer := &http.Server{
 		Addr: net.JoinHostPort(host, port), Handler: handler,
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second,
